@@ -70,6 +70,29 @@ console.log("Allowed origins:", allowedOrigins);
 
 const uploadDir = path.resolve(__dirname, "../uploads");
 
+const moveFile = async (source: string, destination: string) => {
+  try {
+    await fsPromises.rename(source, destination);
+  } catch (error) {
+    const err = error as NodeJS.ErrnoException;
+    if (!err || err.code !== "EXDEV") {
+      throw error;
+    }
+
+    // Cross-device rename fallback: copy then delete source
+    await fsPromises
+      .unlink(destination)
+      .catch((unlinkError: NodeJS.ErrnoException) => {
+        if (unlinkError && unlinkError.code !== "ENOENT") {
+          throw unlinkError;
+        }
+      });
+
+    await fsPromises.copyFile(source, destination);
+    await fsPromises.unlink(source);
+  }
+};
+
 // Initialize upload directory asynchronously
 const initializeUploadDir = async () => {
   try {
@@ -918,7 +941,7 @@ app.post("/import/sqlite/verify", upload.single("db"), async (req, res) => {
     await removeFileIfExists(stagedPath);
 
     if (!isValid) {
-      return res.status(400).json({ error: "Invalid SQLite file" });
+      return res.status(400).json({ error: "Invalid database format" });
     }
 
     res.json({ valid: true, message: "Database file is valid" });
@@ -945,8 +968,7 @@ app.post("/import/sqlite", upload.single("db"), async (req, res) => {
     );
 
     try {
-      // Use async rename instead of blocking renameSync
-      await fsPromises.rename(originalPath, stagedPath);
+      await moveFile(originalPath, stagedPath);
     } catch (error) {
       console.error("Failed to stage uploaded database", error);
       await removeFileIfExists(originalPath);
@@ -975,8 +997,8 @@ app.post("/import/sqlite", upload.single("db"), async (req, res) => {
         // Database doesn't exist, skip backup
       }
 
-      // Move staged file to final location
-      await fsPromises.rename(stagedPath, dbPath);
+      // Move staged file to final location, supporting cross-device mounts
+      await moveFile(stagedPath, dbPath);
     } catch (error) {
       console.error("Failed to replace database", error);
       await removeFileIfExists(stagedPath);
