@@ -9,7 +9,7 @@ import type { Drawing, Collection } from '../types';
 import { useDebounce } from '../hooks/useDebounce';
 import clsx from 'clsx';
 import { ConfirmModal } from '../components/ConfirmModal';
-import { importDrawings, importLibrary } from '../utils/importUtils';
+import { importDrawings } from '../utils/importUtils';
 
 type Point = { x: number; y: number };
 
@@ -542,17 +542,14 @@ export const Dashboard: React.FC = () => {
       setIsLoading(true);
 
       const libFiles = files.filter(f => f.name.endsWith('.excalidrawlib'));
-      const drawingFiles = files.filter(f => !f.name.endsWith('.excalidrawlib'));
-
       if (libFiles.length > 0) {
-        for (const file of libFiles) {
-          const res = await importLibrary(file);
-          if (!res.success) {
-            alert(`Failed to import library ${file.name}: ${res.error}`);
-          }
-        }
+        setShowImportError({
+          isOpen: true,
+          message: 'Library (.excalidrawlib) imports are not supported in this build. Please import drawings (.excalidraw/.json) instead.'
+        });
       }
 
+      const drawingFiles = files.filter(f => !f.name.endsWith('.excalidrawlib'));
       if (drawingFiles.length > 0) {
         const result = await importDrawings(drawingFiles, targetCollectionId, refreshData);
         if (result.failed > 0) {

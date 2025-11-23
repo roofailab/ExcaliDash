@@ -12,10 +12,28 @@ import { PrismaClient } from "./generated/client";
 
 dotenv.config();
 
-// Ensure DATABASE_URL is absolute to avoid relative path issues with generated client
-// Point to the same DB file as Prisma CLI (relative to schema.prisma, usually in prisma/ folder)
-const dbPath = path.resolve(__dirname, "../prisma/dev.db");
-process.env.DATABASE_URL = `file:${dbPath}`;
+// Ensure DATABASE_URL always points to an absolute path when using SQLite.
+// Respect externally provided values and only fall back to the dev database when unset.
+const backendRoot = path.resolve(__dirname, "../");
+const defaultDbPath = path.resolve(backendRoot, "prisma/dev.db");
+const resolveDatabaseUrl = (rawUrl?: string) => {
+  if (!rawUrl || rawUrl.trim().length === 0) {
+    return `file:${defaultDbPath}`;
+  }
+
+  if (!rawUrl.startsWith("file:")) {
+    return rawUrl;
+  }
+
+  const filePath = rawUrl.replace(/^file:/, "");
+  const absolutePath = path.isAbsolute(filePath)
+    ? filePath
+    : path.resolve(backendRoot, filePath);
+
+  return `file:${absolutePath}`;
+};
+
+process.env.DATABASE_URL = resolveDatabaseUrl(process.env.DATABASE_URL);
 console.log("Resolved DATABASE_URL:", process.env.DATABASE_URL);
 
 const app = express();

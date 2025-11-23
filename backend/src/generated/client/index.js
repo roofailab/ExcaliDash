@@ -145,6 +145,10 @@ const config = {
         "fromEnvVar": null,
         "value": "darwin-arm64",
         "native": true
+      },
+      {
+        "fromEnvVar": null,
+        "value": "linux-musl-arm64-openssl-3.0.x"
       }
     ],
     "previewFeatures": [],
@@ -170,8 +174,8 @@ const config = {
       }
     }
   },
-  "inlineSchema": "// This is your Prisma schema file,\n// learn more about it in the docs: https://pris.ly/d/prisma-schema\n\ngenerator client {\n  provider = \"prisma-client-js\"\n  output   = \"../src/generated/client\"\n}\n\ndatasource db {\n  provider = \"sqlite\"\n  url      = env(\"DATABASE_URL\")\n}\n\nmodel Collection {\n  id        String    @id @default(uuid())\n  name      String\n  drawings  Drawing[]\n  createdAt DateTime  @default(now())\n  updatedAt DateTime  @updatedAt\n}\n\nmodel Drawing {\n  id           String      @id @default(uuid())\n  name         String\n  elements     String // Stored as JSON string\n  appState     String // Stored as JSON string\n  files        String      @default(\"{}\") // Stored as JSON string\n  preview      String? // SVG string for thumbnail\n  version      Int         @default(1)\n  collectionId String?\n  collection   Collection? @relation(fields: [collectionId], references: [id])\n  createdAt    DateTime    @default(now())\n  updatedAt    DateTime    @updatedAt\n}\n",
-  "inlineSchemaHash": "e43b17bb99e7f864b5a0f2c54951015f0a3d998329d0577afda58e7c0dee4919",
+  "inlineSchema": "// This is your Prisma schema file,\n// learn more about it in the docs: https://pris.ly/d/prisma-schema\n\ngenerator client {\n  provider      = \"prisma-client-js\"\n  output        = \"../src/generated/client\"\n  binaryTargets = [\"native\", \"linux-musl-arm64-openssl-3.0.x\"]\n}\n\ndatasource db {\n  provider = \"sqlite\"\n  url      = env(\"DATABASE_URL\")\n}\n\nmodel Collection {\n  id        String    @id @default(uuid())\n  name      String\n  drawings  Drawing[]\n  createdAt DateTime  @default(now())\n  updatedAt DateTime  @updatedAt\n}\n\nmodel Drawing {\n  id           String      @id @default(uuid())\n  name         String\n  elements     String // Stored as JSON string\n  appState     String // Stored as JSON string\n  files        String      @default(\"{}\") // Stored as JSON string\n  preview      String? // SVG string for thumbnail\n  version      Int         @default(1)\n  collectionId String?\n  collection   Collection? @relation(fields: [collectionId], references: [id])\n  createdAt    DateTime    @default(now())\n  updatedAt    DateTime    @updatedAt\n}\n",
+  "inlineSchemaHash": "9864a039193c73ddda01fd51751788fa5729bb0a603a9379a3fa314a4aced64f",
   "copyEngine": true
 }
 
@@ -211,6 +215,10 @@ Object.assign(exports, Prisma)
 // file annotations for bundling tools to include these files
 path.join(__dirname, "libquery_engine-darwin-arm64.dylib.node");
 path.join(process.cwd(), "src/generated/client/libquery_engine-darwin-arm64.dylib.node")
+
+// file annotations for bundling tools to include these files
+path.join(__dirname, "libquery_engine-linux-musl-arm64-openssl-3.0.x.so.node");
+path.join(process.cwd(), "src/generated/client/libquery_engine-linux-musl-arm64-openssl-3.0.x.so.node")
 // file annotations for bundling tools to include these files
 path.join(__dirname, "schema.prisma");
 path.join(process.cwd(), "src/generated/client/schema.prisma")

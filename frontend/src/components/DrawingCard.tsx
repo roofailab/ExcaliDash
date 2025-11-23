@@ -69,7 +69,7 @@ export const DrawingCard: React.FC<DrawingCardProps> = ({
             exportBackground: true,
             viewBackgroundColor: drawing.appState.viewBackgroundColor || "#ffffff"
           },
-          files: null,
+          files: drawing.files || {},
           exportPadding: 10
         });
         const previewHtml = svg.outerHTML;
