@@ -129,6 +129,12 @@ const initializeUploadDir = async () => {
 };
 
 const app = express();
+
+// Trust proxy headers (X-Forwarded-For, X-Real-IP) from nginx
+// Required for correct client IP detection when running behind a reverse proxy
+// This fixes CSRF token validation failures in Docker/K8s environments
+app.set("trust proxy", 1);
+
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
   cors: {
