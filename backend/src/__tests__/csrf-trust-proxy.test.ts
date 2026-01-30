@@ -97,7 +97,6 @@ describe("Issue #38: CSRF with trust proxy settings", () => {
     const clientId1 = `${externalProxyIp1}:${userAgent}`;
     const token = createCsrfToken(clientId1);
 
-    console.log("\n📝 Step 1: Client fetches CSRF token");
     console.log(
       "  X-Forwarded-For:",
       `${clientIp1}, ${externalProxyIp1}, 172.17.0.3`,
@@ -111,7 +110,6 @@ describe("Issue #38: CSRF with trust proxy settings", () => {
 
     const clientId2 = `${externalProxyIp2}:${userAgent}`;
 
-    console.log("\n📤 Step 2: Client creates drawing with token");
     console.log(
       "  X-Forwarded-For:",
       `${clientIp1}, ${externalProxyIp2}, 172.17.0.3`,

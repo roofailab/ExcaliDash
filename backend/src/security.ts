@@ -569,8 +569,12 @@ const getCsrfSecret = (): Buffer => {
   cachedCsrfSecret = crypto.randomBytes(32);
   const envLabel = process.env.NODE_ENV ? ` (${process.env.NODE_ENV})` : "";
   console.warn(
-    `[security] CSRF_SECRET is not set${envLabel}. Using an ephemeral per-process secret. ` +
-    "For horizontal scaling (k8s), set CSRF_SECRET to the same value on all instances."
+    `[SECURITY WARNING] CSRF_SECRET is not set${envLabel}.\n` +
+    `Using an ephemeral per-process secret.\n` +
+    `  - Tokens will expire on container restart\n` +
+    `  - Horizontal scaling (k8s) will NOT work\n` +
+    `  - Generate a secret: openssl rand -base64 32\n` +
+    `  - Set environment variable: CSRF_SECRET=<generated-secret>`
   );
   return cachedCsrfSecret;
 };

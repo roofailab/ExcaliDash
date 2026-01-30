@@ -132,8 +132,21 @@ const app = express();
 
 // Trust proxy headers (X-Forwarded-For, X-Real-IP) from nginx
 // Required for correct client IP detection when running behind a reverse proxy
-// This fixes CSRF token validation failures in Docker/K8s environments
-app.set("trust proxy", 1);
+// Fix for issue #38: Use 'true' to handle multiple proxy layers (e.g., Traefik, Synology NAS)
+// This ensures Express extracts the real client IP from the leftmost X-Forwarded-For value
+const trustProxyConfig = process.env.TRUST_PROXY || "true";
+const trustProxyValue = trustProxyConfig === "true"
+  ? true
+  : trustProxyConfig === "false"
+  ? false
+  : parseInt(trustProxyConfig, 10) || 1;
+app.set("trust proxy", trustProxyValue);
+
+if (trustProxyValue === true) {
+  console.log("[config] trust proxy: enabled (handles multiple proxy layers)");
+} else {
+  console.log(`[config] trust proxy: ${trustProxyValue}`);
+}
 
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
@@ -330,9 +343,24 @@ app.use((req, res, next) => {
 const getClientId = (req: express.Request): string => {
   const ip = req.ip || req.connection.remoteAddress || "unknown";
   const userAgent = req.headers["user-agent"] || "unknown";
-  // Create a simple hash for client identification
-  // In production, you might use a session ID instead
-  return `${ip}:${userAgent}`.slice(0, 256);
+  const clientId = `${ip}:${userAgent}`.slice(0, 256);
+
+  // Debug logging for CSRF troubleshooting (issue #38)
+  if (process.env.DEBUG_CSRF === "true") {
+    console.log("[CSRF DEBUG] getClientId", {
+      method: req.method,
+      path: req.path,
+      ip,
+      remoteAddress: req.connection.remoteAddress,
+      "x-forwarded-for": req.headers["x-forwarded-for"],
+      "x-real-ip": req.headers["x-real-ip"],
+      userAgent: userAgent.slice(0, 100),
+      clientIdPreview: clientId.slice(0, 60) + "...",
+      trustProxySetting: req.app.get("trust proxy"),
+    });
+  }
+
+  return clientId;
 };
 
 // Rate limiter specifically for CSRF token generation to prevent store exhaustion
