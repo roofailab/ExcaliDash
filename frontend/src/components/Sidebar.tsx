@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { LayoutGrid, Folder, Plus, Trash2, Edit2, Archive, FolderOpen, Settings as SettingsIcon } from 'lucide-react';
+import { LayoutGrid, Folder, Plus, Trash2, Edit2, Archive, FolderOpen, Settings as SettingsIcon, User, LogOut, Shield } from 'lucide-react';
 import type { Collection } from '../types';
 import clsx from 'clsx';
 import { ConfirmModal } from './ConfirmModal';
 import { Logo } from './Logo';
+import { useAuth } from '../context/AuthContext';
+import { getInitialsFromName } from '../utils/user';
 
 interface SidebarProps {
   collections: Collection[];
@@ -109,8 +111,6 @@ const SidebarItem: React.FC<SidebarItemProps> = ({
   );
 };
 
-
-
 export const Sidebar: React.FC<SidebarProps> = ({
   collections,
   selectedCollectionId,
@@ -120,6 +120,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onDeleteCollection,
   onDrop
 }) => {
+  const navigate = useNavigate();
+  const { logout, user, authEnabled } = useAuth();
+  const isAdmin = user?.role === 'ADMIN';
   const [isCreating, setIsCreating] = useState(false);
   const [newCollectionName, setNewCollectionName] = useState('');
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -127,14 +130,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; type: 'item' | 'background'; id?: string } | null>(null);
   const [collectionToDelete, setCollectionToDelete] = useState<string | null>(null);
   const [isTrashDragOver, setIsTrashDragOver] = useState(false);
-  const navigate = useNavigate();
 
   useEffect(() => {
     const handleClickOutside = () => setContextMenu(null);
     document.addEventListener('click', handleClickOutside);
     return () => document.removeEventListener('click', handleClickOutside);
   }, []);
-
 
   const handleCreateSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -167,7 +168,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   return (
     <>
       <div className="w-full flex flex-col h-full bg-transparent">
-        <div className="p-5 pb-2">
+        <div className="p-4 sm:p-5 pb-2">
           <h1 className="text-2xl text-slate-900 dark:text-white flex items-center gap-3 tracking-tight" style={{ fontFamily: 'Excalifont' }}>
             <Logo className="w-10 h-10" />
             <span className="mt-1">ExcaliDash</span>
@@ -176,7 +177,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </div>
 
         <nav
-          className="flex-1 overflow-y-auto py-4 space-y-8 custom-scrollbar"
+          className="flex-1 overflow-y-auto py-3 sm:py-4 space-y-4 sm:space-y-8 custom-scrollbar"
           onContextMenu={handleBackgroundContextMenu}
         >
           <div className="space-y-1">
@@ -197,6 +198,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 <span className="min-w-0 flex-1 text-left">All Drawings</span>
               </button>
             </div>
+
+            <SidebarItem
+              id={"shared"}
+              icon={<Shield size={18} />}
+              label="Shared with me"
+              isActive={selectedCollectionId === "shared"}
+              onClick={() => onSelectCollection("shared")}
+            />
 
             <SidebarItem
               id={null}
@@ -258,7 +267,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </div>
         </nav>
 
-        <div className="px-3 pt-4 pb-4 border-t border-slate-200/50 dark:border-slate-700/50 space-y-2">
+        <div className="px-3 pt-3 sm:pt-4 pb-3 sm:pb-4 border-t border-slate-200/50 dark:border-slate-700/50 space-y-2">
           <button
             onDragOver={(e) => {
               e.preventDefault();
@@ -284,6 +293,36 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <span className="min-w-0 flex-1 text-left">Trash</span>
           </button>
 
+          {authEnabled && (
+            <button
+              onClick={() => navigate('/profile')}
+              className={clsx(
+                "w-full flex items-center gap-3 px-3 py-2 text-sm font-bold rounded-xl transition-all duration-200 border-2 border-black dark:border-neutral-700 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] dark:shadow-[2px_2px_0px_0px_rgba(255,255,255,0.2)]",
+                selectedCollectionId === 'PROFILE'
+                  ? "bg-indigo-50 dark:bg-neutral-800 text-indigo-900 dark:text-neutral-200 -translate-y-0.5"
+                  : "bg-white dark:bg-neutral-900 text-slate-900 dark:text-neutral-200 hover:bg-slate-50 dark:hover:bg-neutral-800 hover:shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] dark:hover:shadow-[4px_4px_0px_0px_rgba(255,255,255,0.2)] hover:-translate-y-0.5"
+              )}
+            >
+              <User size={18} />
+              <span className="min-w-0 flex-1 text-left">Profile</span>
+            </button>
+          )}
+
+          {authEnabled && isAdmin && (
+            <button
+              onClick={() => navigate('/admin')}
+              className={clsx(
+                "w-full flex items-center gap-3 px-3 py-2 text-sm font-bold rounded-xl transition-all duration-200 border-2 border-black dark:border-neutral-700 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] dark:shadow-[2px_2px_0px_0px_rgba(255,255,255,0.2)]",
+                selectedCollectionId === 'ADMIN'
+                  ? "bg-indigo-50 dark:bg-neutral-800 text-indigo-900 dark:text-neutral-200 -translate-y-0.5"
+                  : "bg-white dark:bg-neutral-900 text-slate-900 dark:text-neutral-200 hover:bg-slate-50 dark:hover:bg-neutral-800 hover:shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] dark:hover:shadow-[4px_4px_0px_0px_rgba(255,255,255,0.2)] hover:-translate-y-0.5"
+              )}
+            >
+              <Shield size={18} />
+              <span className="min-w-0 flex-1 text-left">Admin</span>
+            </button>
+          )}
+
           <button
             onClick={() => navigate('/settings')}
             className={clsx(
@@ -296,10 +335,35 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <SettingsIcon size={18} />
             <span className="min-w-0 flex-1 text-left">Settings</span>
           </button>
+
+          {authEnabled && (
+            <div className="mt-auto pt-4 border-t-2 border-slate-200 dark:border-neutral-700">
+              {user && (
+                <div className="py-2 text-xs text-slate-500 dark:text-neutral-500 mb-2">
+                  <div className="grid grid-cols-[auto_1fr_auto] items-center gap-3">
+                    <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg bg-indigo-600 text-white font-bold flex items-center justify-center">
+                      {getInitialsFromName(user.name)}
+                    </div>
+                    <div className="min-w-0 text-left">
+                      <div className="font-semibold text-slate-700 dark:text-neutral-300 truncate leading-tight">{user.name}</div>
+                      <div className="truncate leading-tight">{user.email}</div>
+                    </div>
+                    <div className="w-7 h-7 sm:w-8 sm:h-8 invisible" aria-hidden="true" />
+                  </div>
+                </div>
+              )}
+              <button
+                onClick={logout}
+                className="w-full flex items-center gap-3 px-3 py-2 text-sm font-bold rounded-xl transition-all duration-200 border-2 border-rose-300 dark:border-rose-700 bg-white dark:bg-neutral-900 text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-900/30 hover:shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] dark:hover:shadow-[2px_2px_0px_0px_rgba(255,255,255,0.2)] hover:-translate-y-0.5 cursor-pointer"
+              >
+                <LogOut size={18} />
+                <span className="min-w-0 flex-1 text-left">Logout</span>
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
-      {/* Context Menu */}
       {contextMenu && (
         <div
           className="fixed inset-0 z-50"
@@ -370,4 +434,3 @@ export const Sidebar: React.FC<SidebarProps> = ({
     </>
   );
 };
-

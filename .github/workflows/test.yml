@@ -85,7 +85,7 @@ jobs:
       - name: Setup backend database
         run: |
           cd backend
-          npx prisma db push
+          npx prisma migrate deploy
         env:
           DATABASE_URL: file:${{ github.workspace }}/backend/prisma/e2e-test.db
       
@@ -108,7 +108,7 @@ jobs:
         run: |
           # Start backend server in background
           cd backend
-          DATABASE_URL="file:${{ github.workspace }}/backend/prisma/e2e-test.db" FRONTEND_URL="http://localhost:5173" npm run dev &
+          DATABASE_URL="file:${{ github.workspace }}/backend/prisma/e2e-test.db" FRONTEND_URL="http://localhost:6767" npm run dev &
           BACKEND_PID=$!
           cd ..
           
@@ -132,7 +132,7 @@ jobs:
           # Wait for frontend to be ready
           echo "Waiting for frontend server..."
           for i in {1..30}; do
-            if curl -s http://localhost:5173 > /dev/null; then
+            if curl -s http://localhost:6767 > /dev/null; then
               echo "Frontend is ready!"
               break
             fi

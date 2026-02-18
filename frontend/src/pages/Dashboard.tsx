@@ -1,52 +1,23 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
-import { createPortal } from 'react-dom';
 import { Layout } from '../components/Layout';
 import { DrawingCard } from '../components/DrawingCard';
-import { Plus, Search, Loader2, Inbox, Trash2, Folder, ArrowRight, Copy, Upload } from 'lucide-react';
+import { Plus, Search, Loader2, Inbox, Trash2, Folder, ArrowRight, Copy, Upload, CheckSquare, Square, ArrowUp, ArrowDown, ChevronDown, FileText, Calendar, Clock } from 'lucide-react';
 import { useNavigate, useSearchParams, useLocation } from 'react-router-dom';
 import * as api from '../api';
-import type { DrawingSummary, Collection } from '../types';
+import type { DrawingSortField, SortDirection } from '../api';
 import { useDebounce } from '../hooks/useDebounce';
 import clsx from 'clsx';
 import { ConfirmModal } from '../components/ConfirmModal';
 import { useUpload } from '../context/UploadContext';
+import { DragOverlayPortal, getSelectionBounds, type Point, type SelectionBounds } from './dashboard/shared';
+import { useDashboardData } from './dashboard/useDashboardData';
 
-type Point = { x: number; y: number };
-
-type SelectionBounds = {
-  left: number;
-  top: number;
-  right: number;
-  bottom: number;
-  width: number;
-  height: number;
-};
-
-const getSelectionBounds = (start: Point, current: Point): SelectionBounds => {
-  const left = Math.min(start.x, current.x);
-  const right = Math.max(start.x, current.x);
-  const top = Math.min(start.y, current.y);
-  const bottom = Math.max(start.y, current.y);
-  return {
-    left,
-    top,
-    right,
-    bottom,
-    width: right - left,
-    height: bottom - top,
-  };
-};
-
-const DragOverlayPortal: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  return createPortal(children, document.body);
-};
+const PAGE_SIZE = 24;
 
 export const Dashboard: React.FC = () => {
   const [searchParams] = useSearchParams();
   const location = useLocation();
   const navigate = useNavigate();
-  const [drawings, setDrawings] = useState<DrawingSummary[]>([]);
-  const [collections, setCollections] = useState<Collection[]>([]);
 
   const selectedCollectionId = React.useMemo(() => {
     if (location.pathname === '/') return undefined;
@@ -73,6 +44,7 @@ export const Dashboard: React.FC = () => {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [lastSelectedId, setLastSelectedId] = useState<string | null>(null);
   const [showBulkMoveMenu, setShowBulkMoveMenu] = useState(false);
+  const [showSortMenu, setShowSortMenu] = useState(false);
 
   const [drawingToDelete, setDrawingToDelete] = useState<string | null>(null);
   const [showBulkDeleteConfirm, setShowBulkDeleteConfirm] = useState(false);
@@ -84,9 +56,9 @@ export const Dashboard: React.FC = () => {
   const [dragCurrent, setDragCurrent] = useState<Point | null>(null);
   const [potentialDragId, setPotentialDragId] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const loaderRef = useRef<HTMLDivElement>(null);
 
-  type SortField = 'name' | 'createdAt' | 'updatedAt';
-  type SortDirection = 'asc' | 'desc';
+  type SortField = DrawingSortField;
 
 
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -96,30 +68,46 @@ export const Dashboard: React.FC = () => {
     direction: 'desc'
   });
 
-  const [isLoading, setIsLoading] = useState(false);
-
   const { uploadFiles } = useUpload();
-
-  const refreshData = useCallback(async () => {
-    setIsLoading(true);
-    try {
-      const [drawingsData, collectionsData] = await Promise.all([
-        api.getDrawings(debouncedSearch, selectedCollectionId),
-        api.getCollections()
-      ]);
-      setDrawings(drawingsData);
-      setCollections(collectionsData);
-      setSelectedIds(new Set());
-    } catch (err) {
-      console.error('Failed to fetch data:', err);
-    } finally {
-      setIsLoading(false);
-    }
-  }, [debouncedSearch, selectedCollectionId]);
+  const resetSelection = useCallback(() => {
+    setSelectedIds(new Set());
+  }, []);
+  const {
+    drawings,
+    setDrawings,
+    collections,
+    setCollections,
+    setTotalCount,
+    isFetchingMore,
+    isLoading,
+    hasMore,
+    refreshData,
+    fetchMore,
+  } = useDashboardData({
+    debouncedSearch,
+    selectedCollectionId,
+    sortField: sortConfig.field,
+    sortDirection: sortConfig.direction,
+    pageSize: PAGE_SIZE,
+    onRefreshSuccess: resetSelection,
+  });
 
   useEffect(() => {
-    refreshData();
-  }, [refreshData]);
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && hasMore) {
+          fetchMore();
+        }
+      },
+      { threshold: 0.1 }
+    );
+
+    if (loaderRef.current) {
+      observer.observe(loaderRef.current);
+    }
+
+    return () => observer.disconnect();
+  }, [fetchMore, hasMore]);
 
   const [isDraggingFile, setIsDraggingFile] = useState(false);
   const dragCounter = useRef(0);
@@ -214,22 +202,11 @@ export const Dashboard: React.FC = () => {
     setDragCurrent({ x: e.clientX, y: e.clientY });
   };
 
-  const sortedDrawings = React.useMemo(() => {
-    return [...drawings].sort((a, b) => {
-      const { field, direction } = sortConfig;
-      const modifier = direction === 'asc' ? 1 : -1;
-      if (field === 'name') return a.name.localeCompare(b.name) * modifier;
-      if (field === 'createdAt') return (a.createdAt - b.createdAt) * modifier;
-      if (field === 'updatedAt') return (a.updatedAt - b.updatedAt) * modifier;
-      return 0;
-    });
-  }, [drawings, sortConfig]);
+  const sortedDrawings = drawings;
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Cmd+A or Ctrl+A to Select All
       if ((e.metaKey || e.ctrlKey) && e.key === 'a') {
-        // Don't select all if user is typing in an input
         if (document.activeElement instanceof HTMLInputElement || document.activeElement instanceof HTMLTextAreaElement) {
           return;
         }
@@ -238,14 +215,12 @@ export const Dashboard: React.FC = () => {
         setSelectedIds(allIds);
       }
 
-      // Escape to Clear Selection
       if (e.key === 'Escape') {
         e.preventDefault();
         setSelectedIds(new Set());
         setLastSelectedId(null);
       }
 
-      // Cmd+K to Search
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
         e.preventDefault();
         searchInputRef.current?.focus();
@@ -256,40 +231,36 @@ export const Dashboard: React.FC = () => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [sortedDrawings]);
 
-  const handleSort = (field: SortField) => {
+  const handleSortFieldChange = (field: SortField) => {
     setSortConfig(current => {
-      if (current.field === field) return { ...current, direction: current.direction === 'asc' ? 'desc' : 'asc' };
-      const defaultDirection = field === 'name' ? 'asc' : 'desc';
-      return { field, direction: defaultDirection };
+      if (current.field !== field) {
+        const defaultDirection = field === 'name' ? 'asc' : 'desc';
+        return { field, direction: defaultDirection };
+      }
+      return current;
     });
+    setShowSortMenu(false);
   };
 
-  const SortButton = ({ field, label }: { field: SortField; label: string }) => {
-    const isActive = sortConfig.field === field;
-    return (
-      <button
-        onClick={() => handleSort(field)}
-        className={`
-          flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-bold transition-all border-2 border-black dark:border-neutral-700
-          ${isActive
-            ? 'bg-indigo-100 dark:bg-neutral-800 text-indigo-900 dark:text-neutral-200 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] dark:shadow-[2px_2px_0px_0px_rgba(255,255,255,0.2)] -translate-y-0.5'
-            : 'bg-white dark:bg-neutral-900 text-slate-600 dark:text-neutral-400 hover:bg-slate-50 dark:hover:bg-neutral-800 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] dark:shadow-[2px_2px_0px_0px_rgba(255,255,255,0.2)] hover:-translate-y-0.5'
-          }
-        `}
-      >
-        {label}
-        <div className="flex flex-col -space-y-1">
-          <svg className={`w-2.5 h-2.5 ${isActive && sortConfig.direction === 'asc' ? 'text-indigo-600 dark:text-neutral-200' : 'text-slate-400 dark:text-neutral-600'}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="m18 15-6-6-6 6" /></svg>
-          <svg className={`w-2.5 h-2.5 ${isActive && sortConfig.direction === 'desc' ? 'text-indigo-600 dark:text-neutral-200' : 'text-slate-400 dark:text-neutral-600'}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="m6 9 6 6 6-6" /></svg>
-        </div>
-      </button>
-    );
+  const handleSortDirectionToggle = () => {
+    setSortConfig(current => ({
+      ...current,
+      direction: current.direction === 'asc' ? 'desc' : 'asc'
+    }));
   };
 
-  
-    const isTrashView = selectedCollectionId === 'trash';
+  const sortOptions: { field: SortField; label: string; icon: React.ReactNode }[] = [
+    { field: 'name', label: 'Name', icon: <FileText size={16} /> },
+    { field: 'createdAt', label: 'Date Created', icon: <Calendar size={16} /> },
+    { field: 'updatedAt', label: 'Date Modified', icon: <Clock size={16} /> },
+  ];
+
+  const currentSortOption = sortOptions.find(opt => opt.field === sortConfig.field) || sortOptions[0];
+
+  const isTrashView = selectedCollectionId === 'trash';
+  const isSharedView = selectedCollectionId === 'shared';
   const handleCreateDrawing = async () => {
-    if (isTrashView) return;
+    if (isTrashView || isSharedView) return;
     try {
       const targetCollectionId = selectedCollectionId === undefined ? null : selectedCollectionId;
       const { id } = await api.createDrawing('Untitled Drawing', targetCollectionId);
@@ -300,33 +271,39 @@ export const Dashboard: React.FC = () => {
   };
 
   const handleImportDrawings = async (files: FileList | null) => {
-    if (!files || isTrashView) return;
+    if (!files || isTrashView || isSharedView) return;
 
     const fileArray = Array.from(files);
     const targetCollectionId = selectedCollectionId === undefined ? null : selectedCollectionId;
     
-    // Use the global upload context
     uploadFiles(fileArray, targetCollectionId).finally(() => {
-      // Refresh after all uploads complete (success or failure)
       refreshData();
     });
   };
 
   const handleRenameDrawing = async (id: string, name: string) => {
     setDrawings(prev => prev.map(d => d.id === id ? { ...d, name } : d));
-    await api.updateDrawing(id, { name });
+    try {
+      await api.updateDrawing(id, { name });
+    } catch (err) {
+      console.error("Failed to rename drawing:", err);
+      refreshData();
+    }
   };
 
   const handleDeleteDrawing = async (id: string) => {
     if (isTrashView) {
-      // Permanent Delete -> Confirm first
       setDrawingToDelete(id);
     } else {
-      // Move to Trash -> No Confirm
       const trashId = 'trash';
 
-      // Optimistic Remove from current view
-      setDrawings(prev => prev.filter(d => d.id !== id));
+      setDrawings(prev => {
+        const next = prev.filter(d => d.id !== id);
+        if (next.length !== prev.length) {
+          setTotalCount(t => t - 1);
+        }
+        return next;
+      });
       setSelectedIds(prev => { const s = new Set(prev); s.delete(id); return s; });
 
       try {
@@ -339,12 +316,18 @@ export const Dashboard: React.FC = () => {
   };
 
   const executePermanentDelete = async (id: string) => {
-    setDrawings(prev => prev.filter(d => d.id !== id));
-    setSelectedIds(prev => { const s = new Set(prev); s.delete(id); return s; });
-    setDrawingToDelete(null); // Close modal immediately
-
+    // Close modal immediately, but only remove from the UI after the backend confirms deletion.
+    setDrawingToDelete(null);
     try {
       await api.deleteDrawing(id);
+      setDrawings(prev => {
+        const next = prev.filter(d => d.id !== id);
+        if (next.length !== prev.length) {
+          setTotalCount(t => t - 1);
+        }
+        return next;
+      });
+      setSelectedIds(prev => { const s = new Set(prev); s.delete(id); return s; });
     } catch (err) {
       console.error("Failed to delete drawing", err);
       refreshData();
@@ -355,7 +338,6 @@ export const Dashboard: React.FC = () => {
     setSelectedIds(prev => {
       const next = new Set(prev);
 
-      // Handle Shift+Select
       if (e.shiftKey && lastSelectedId && sortedDrawings.some(d => d.id === lastSelectedId)) {
         const currentIndex = sortedDrawings.findIndex(d => d.id === id);
         const lastIndex = sortedDrawings.findIndex(d => d.id === lastSelectedId);
@@ -395,7 +377,11 @@ export const Dashboard: React.FC = () => {
     const trashId = 'trash';
     const ids = Array.from(selectedIds);
 
-    setDrawings(prev => prev.filter(d => !selectedIds.has(d.id)));
+    setDrawings(prev => {
+      const next = prev.filter(d => !selectedIds.has(d.id));
+      setTotalCount(t => t - (prev.length - next.length));
+      return next;
+    });
     setSelectedIds(new Set());
 
     try {
@@ -408,12 +394,17 @@ export const Dashboard: React.FC = () => {
 
   const executeBulkPermanentDelete = async () => {
     const ids = Array.from(selectedIds);
-    setDrawings(prev => prev.filter(d => !selectedIds.has(d.id)));
-    setSelectedIds(new Set());
     setShowBulkDeleteConfirm(false);
 
     try {
       await Promise.all(ids.map(id => api.deleteDrawing(id)));
+      const toDelete = new Set(ids);
+      setDrawings(prev => {
+        const next = prev.filter(d => !toDelete.has(d.id));
+        setTotalCount(t => t - (prev.length - next.length));
+        return next;
+      });
+      setSelectedIds(new Set());
     } catch (err) {
       console.error("Failed bulk delete", err);
       refreshData();
@@ -425,14 +416,15 @@ export const Dashboard: React.FC = () => {
 
     const idsToMove = Array.from(selectedIds);
 
-    // Optimistic update
     setDrawings(prev => {
       const updated = prev.map(d => selectedIds.has(d.id) ? { ...d, collectionId } : d);
       if (selectedCollectionId === undefined) return updated;
-      return updated.filter(d => {
+      const next = updated.filter(d => {
         if (selectedCollectionId === null) return d.collectionId === null;
         return d.collectionId === selectedCollectionId;
       });
+      setTotalCount(t => t - (prev.length - next.length));
+      return next;
     });
     setSelectedIds(new Set()); // Clear selection after move
     setShowBulkMoveMenu(false);
@@ -469,12 +461,16 @@ export const Dashboard: React.FC = () => {
 
   const handleMoveToCollection = async (id: string, collectionId: string | null) => {
     setDrawings(prev => {
-      return prev.map(d => d.id === id ? { ...d, collectionId } : d)
-        .filter(d => {
-          if (selectedCollectionId === undefined) return true;
-          if (selectedCollectionId === null) return d.collectionId === null;
-          return d.collectionId === selectedCollectionId;
-        });
+      const updated = prev.map(d => d.id === id ? { ...d, collectionId } : d);
+      const next = updated.filter(d => {
+        if (selectedCollectionId === undefined) return true;
+        if (selectedCollectionId === null) return d.collectionId === null;
+        return d.collectionId === selectedCollectionId;
+      });
+      if (next.length !== prev.length) {
+        setTotalCount(t => t - 1);
+      }
+      return next;
     });
     try {
       await api.updateDrawing(id, { collectionId });
@@ -485,14 +481,24 @@ export const Dashboard: React.FC = () => {
   };
 
   const handleCreateCollection = async (name: string) => {
-    await api.createCollection(name);
-    const newCollections = await api.getCollections();
-    setCollections(newCollections);
+    try {
+      await api.createCollection(name);
+      const newCollections = await api.getCollections();
+      setCollections(newCollections);
+    } catch (err) {
+      console.error("Failed to create collection:", err);
+      refreshData();
+    }
   };
 
   const handleEditCollection = async (id: string, name: string) => {
     setCollections(prev => prev.map(c => c.id === id ? { ...c, name } : c));
-    await api.updateCollection(id, name);
+    try {
+      await api.updateCollection(id, name);
+    } catch (err) {
+      console.error("Failed to rename collection:", err);
+      refreshData();
+    }
   };
 
   const handleDeleteCollection = async (id: string) => {
@@ -500,25 +506,42 @@ export const Dashboard: React.FC = () => {
     if (selectedCollectionId === id) {
       setSelectedCollectionId(undefined);
     }
-    await api.deleteCollection(id);
-    refreshData();
+    try {
+      await api.deleteCollection(id);
+      refreshData();
+    } catch (err) {
+      console.error("Failed to delete collection:", err);
+      refreshData();
+    }
   };
 
   const viewTitle = React.useMemo(() => {
     if (selectedCollectionId === undefined) return "All Drawings";
     if (selectedCollectionId === null) return "Unorganized";
+    if (selectedCollectionId === 'shared') return "Shared with me";
     if (selectedCollectionId === 'trash') return "Trash";
     const collection = collections.find(c => c.id === selectedCollectionId);
     return collection ? collection.name : "Collection";
   }, [selectedCollectionId, collections]);
 
   const hasSelection = selectedIds.size > 0;
+  const allSelected = sortedDrawings.length > 0 && selectedIds.size === sortedDrawings.length;
+  
+  const handleSelectAll = () => {
+    if (allSelected) {
+      setSelectedIds(new Set());
+      setLastSelectedId(null);
+    } else {
+      const allIds = new Set(sortedDrawings.map(d => d.id));
+      setSelectedIds(allIds);
+    }
+  };
 
   const handleDrop = async (e: React.DragEvent, targetCollectionId: string | null) => {
     e.preventDefault();
     e.stopPropagation();
+    if (isSharedView) return;
 
-    // Handle Files
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
       const files = Array.from(e.dataTransfer.files);
       
@@ -548,21 +571,20 @@ export const Dashboard: React.FC = () => {
     if (selectedIds.has(draggedDrawingId)) {
       idsToMove = new Set(selectedIds);
     } else {
-      // Otherwise move just the dragged item
       idsToMove.add(draggedDrawingId);
     }
 
-    // Optimistic Update
     setDrawings(prev => {
       const updated = prev.map(d => idsToMove.has(d.id) ? { ...d, collectionId: targetCollectionId } : d);
       if (selectedCollectionId === undefined) return updated;
-      return updated.filter(d => {
+      const next = updated.filter(d => {
         if (selectedCollectionId === null) return d.collectionId === null;
         return d.collectionId === selectedCollectionId;
       });
+      setTotalCount(t => t - (prev.length - next.length));
+      return next;
     });
 
-    // Clear selection if we moved selected items
     if (selectedIds.has(draggedDrawingId)) {
       setSelectedIds(new Set());
     }
@@ -609,7 +631,7 @@ export const Dashboard: React.FC = () => {
       onCreateCollection={handleCreateCollection}
       onEditCollection={handleEditCollection}
       onDeleteCollection={handleDeleteCollection}
-      onDrop={handleDrop}
+      onDrop={isSharedView ? undefined : handleDrop}
     >
       <div
         id="drag-preview"
@@ -632,7 +654,7 @@ export const Dashboard: React.FC = () => {
 
                 {d.preview ? (
                   <div
-                    className="w-full h-full p-2 flex items-center justify-center [&>svg]:w-full [&>svg]:h-full [&>svg]:object-contain [&>svg]:drop-shadow-sm relative z-10"
+                    className="w-full h-full p-2 flex items-center justify-center [&>svg]:w-auto [&>svg]:h-auto [&>svg]:max-w-full [&>svg]:max-h-full [&>svg]:drop-shadow-sm relative z-10"
                     dangerouslySetInnerHTML={{ __html: d.preview }}
                   />
                 ) : (
@@ -663,12 +685,12 @@ export const Dashboard: React.FC = () => {
         </DragOverlayPortal>
       )}
 
-      <h1 className="text-5xl mb-8 text-slate-900 dark:text-white pl-1" style={{ fontFamily: 'Excalifont' }}>
+      <h1 className="text-3xl sm:text-5xl mb-6 sm:mb-8 text-slate-900 dark:text-white pl-1" style={{ fontFamily: 'Excalifont' }}>
         {viewTitle}
       </h1>
 
-      <div className="mb-8 flex flex-col xl:flex-row items-center justify-between gap-4">
-        <div className="flex flex-1 w-full gap-3 items-center">
+      <div className="mb-8 flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
+        <div className="flex flex-1 w-full lg:w-auto gap-3 items-center flex-wrap">
           <div className="relative flex-1 group max-w-md transition-all duration-200 focus-within:-translate-y-0.5">
             <input
               ref={searchInputRef}
@@ -685,50 +707,121 @@ export const Dashboard: React.FC = () => {
               </kbd>
             </div>
           </div>
-          <div className="flex items-center gap-2 p-1 overflow-x-auto no-scrollbar">
-            <SortButton field="name" label="Name" />
-            <SortButton field="createdAt" label="Date Created" />
-            <SortButton field="updatedAt" label="Date Modified" />
+          <div className="flex items-center gap-2 p-1 flex-wrap">
+            <div className="relative">
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowSortMenu(!showSortMenu);
+                }}
+                className={clsx(
+                  "flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-bold transition-all border-2 border-black dark:border-neutral-700 whitespace-nowrap h-[42px] w-full sm:w-[180px]",
+                  "bg-white dark:bg-neutral-900 text-slate-700 dark:text-neutral-300 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] dark:shadow-[2px_2px_0px_0px_rgba(255,255,255,0.2)] hover:shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] dark:hover:shadow-[4px_4px_0px_0px_rgba(255,255,255,0.2)] hover:-translate-y-0.5 hover:bg-indigo-50 dark:hover:bg-indigo-900/30"
+                )}
+              >
+                <span className="text-indigo-600 dark:text-indigo-400 flex-shrink-0">{currentSortOption.icon}</span>
+                <span className="whitespace-nowrap flex-1 text-left">{currentSortOption.label}</span>
+                <ChevronDown size={16} className="text-slate-400 dark:text-neutral-500 flex-shrink-0" />
+              </button>
+
+              {showSortMenu && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setShowSortMenu(false)} />
+                  <div className="absolute top-full left-0 mt-2 z-50 bg-white dark:bg-neutral-800 rounded-lg border-2 border-black dark:border-neutral-700 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] dark:shadow-[4px_4px_0px_0px_rgba(255,255,255,0.2)] py-1 min-w-[180px]">
+                    {sortOptions.map((option) => (
+                      <button
+                        key={option.field}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleSortFieldChange(option.field);
+                        }}
+                        className={clsx(
+                          "w-full px-3 py-2 text-sm text-left flex items-center gap-2 transition-colors",
+                          sortConfig.field === option.field
+                            ? "bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 font-bold"
+                            : "text-slate-600 dark:text-neutral-300 hover:bg-slate-50 dark:hover:bg-neutral-700 hover:text-indigo-600 dark:hover:text-indigo-400"
+                        )}
+                      >
+                        <span className="text-indigo-600 dark:text-indigo-400">{option.icon}</span>
+                        <span>{option.label}</span>
+                        {sortConfig.field === option.field && (
+                          <span className="ml-auto text-xs">✓</span>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+
+            <button
+              onClick={handleSortDirectionToggle}
+              className={clsx(
+                "flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-bold transition-all border-2 border-black dark:border-neutral-700 h-[42px] min-w-[42px]",
+                "bg-white dark:bg-neutral-900 text-indigo-600 dark:text-indigo-400 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] dark:shadow-[2px_2px_0px_0px_rgba(255,255,255,0.2)] hover:shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] dark:hover:shadow-[4px_4px_0px_0px_rgba(255,255,255,0.2)] hover:-translate-y-0.5 hover:bg-indigo-50 dark:hover:bg-indigo-900/30"
+              )}
+              title={sortConfig.direction === 'asc' ? 'Sort Ascending' : 'Sort Descending'}
+            >
+              {sortConfig.direction === 'asc' ? (
+                <ArrowUp size={18} />
+              ) : (
+                <ArrowDown size={18} />
+              )}
+            </button>
           </div>
         </div>
 
-        <div className="flex items-center gap-3 w-full sm:w-auto justify-end">
+        <div className="flex items-center gap-3 w-full lg:w-auto justify-start lg:justify-end flex-wrap">
           <div className="flex items-center gap-2 mr-2">
             <button
-              onClick={handleBulkDeleteClick}
-              disabled={!hasSelection}
+              onClick={handleSelectAll}
+              disabled={sortedDrawings.length === 0}
               className={clsx(
                 "h-[42px] w-[42px] flex items-center justify-center rounded-xl border-2 transition-all",
-                hasSelection
-                  ? "bg-white dark:bg-neutral-800 border-black dark:border-neutral-700 text-rose-600 dark:text-rose-400 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] dark:shadow-[2px_2px_0px_0px_rgba(255,255,255,0.2)] hover:shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] dark:hover:shadow-[4px_4px_0px_0px_rgba(255,255,255,0.2)] hover:-translate-y-1 hover:bg-rose-50 dark:hover:bg-rose-900/30"
-                  : "bg-slate-100 dark:bg-neutral-900 border-slate-300 dark:border-neutral-800 text-slate-300 dark:text-neutral-700 cursor-not-allowed"
-              )}
-              title={isTrashView ? "Delete Permanently" : "Move to Trash"}
-            >
-              <Trash2 size={20} />
-            </button>
-
-            <button
-              onClick={handleBulkDuplicate}
-              disabled={!hasSelection || isTrashView}
-              className={clsx(
-                "h-[42px] w-[42px] flex items-center justify-center rounded-xl border-2 transition-all",
-                hasSelection && !isTrashView
+                sortedDrawings.length > 0
                   ? "bg-white dark:bg-neutral-800 border-black dark:border-neutral-700 text-indigo-600 dark:text-indigo-400 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] dark:shadow-[2px_2px_0px_0px_rgba(255,255,255,0.2)] hover:shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] dark:hover:shadow-[4px_4px_0px_0px_rgba(255,255,255,0.2)] hover:-translate-y-1 hover:bg-indigo-50 dark:hover:bg-indigo-900/30"
                   : "bg-slate-100 dark:bg-neutral-900 border-slate-300 dark:border-neutral-800 text-slate-300 dark:text-neutral-700 cursor-not-allowed"
               )}
-              title="Duplicate Selected"
+              title={allSelected ? "Deselect All" : "Select All"}
             >
-              <Copy size={20} />
+              {allSelected ? <CheckSquare size={20} /> : <Square size={20} />}
             </button>
+
+          <button
+            onClick={handleBulkDeleteClick}
+            disabled={!hasSelection || isSharedView}
+            className={clsx(
+              "h-[42px] w-[42px] flex items-center justify-center rounded-xl border-2 transition-all",
+              hasSelection && !isSharedView
+                ? "bg-white dark:bg-neutral-800 border-black dark:border-neutral-700 text-rose-600 dark:text-rose-400 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] dark:shadow-[2px_2px_0px_0px_rgba(255,255,255,0.2)] hover:shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] dark:hover:shadow-[4px_4px_0px_0px_rgba(255,255,255,0.2)] hover:-translate-y-1 hover:bg-rose-50 dark:hover:bg-rose-900/30"
+                : "bg-slate-100 dark:bg-neutral-900 border-slate-300 dark:border-neutral-800 text-slate-300 dark:text-neutral-700 cursor-not-allowed"
+            )}
+            title={isTrashView ? "Delete Permanently" : "Move to Trash"}
+          >
+            <Trash2 size={20} />
+          </button>
+
+          <button
+            onClick={handleBulkDuplicate}
+            disabled={!hasSelection || isTrashView || isSharedView}
+            className={clsx(
+              "h-[42px] w-[42px] flex items-center justify-center rounded-xl border-2 transition-all",
+              hasSelection && !isTrashView && !isSharedView
+                ? "bg-white dark:bg-neutral-800 border-black dark:border-neutral-700 text-indigo-600 dark:text-indigo-400 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] dark:shadow-[2px_2px_0px_0px_rgba(255,255,255,0.2)] hover:shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] dark:hover:shadow-[4px_4px_0px_0px_rgba(255,255,255,0.2)] hover:-translate-y-1 hover:bg-indigo-50 dark:hover:bg-indigo-900/30"
+                : "bg-slate-100 dark:bg-neutral-900 border-slate-300 dark:border-neutral-800 text-slate-300 dark:text-neutral-700 cursor-not-allowed"
+            )}
+            title="Duplicate Selected"
+          >
+            <Copy size={20} />
+          </button>
 
             <div className="relative">
               <button
                 onClick={() => hasSelection && setShowBulkMoveMenu(!showBulkMoveMenu)}
-                disabled={!hasSelection}
+                disabled={!hasSelection || isSharedView}
                 className={clsx(
                   "h-[42px] w-[42px] flex items-center justify-center rounded-xl border-2 transition-all",
-                  hasSelection
+                  hasSelection && !isSharedView
                     ? "bg-white dark:bg-neutral-800 border-black dark:border-neutral-700 text-emerald-600 dark:text-emerald-400 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] dark:shadow-[2px_2px_0px_0px_rgba(255,255,255,0.2)] hover:shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] dark:hover:shadow-[4px_4px_0px_0px_rgba(255,255,255,0.2)] hover:-translate-y-1 hover:bg-emerald-50 dark:hover:bg-emerald-900/30"
                     : "bg-slate-100 dark:bg-neutral-900 border-slate-300 dark:border-neutral-800 text-slate-300 dark:text-neutral-700 cursor-not-allowed"
                 )}
@@ -753,7 +846,7 @@ export const Dashboard: React.FC = () => {
                     >
                       <Inbox size={14} /> Unorganized
                     </button>
-                    {collections.filter(c => c.name !== 'Trash').map(c => (
+                    {collections.filter(c => c.id !== 'trash').map(c => (
                       <button
                         key={c.id}
                         onClick={() => handleBulkMove(c.id)}
@@ -782,10 +875,10 @@ export const Dashboard: React.FC = () => {
 
           <button
             onClick={() => document.getElementById('dashboard-import')?.click()}
-            disabled={isTrashView}
+            disabled={isTrashView || isSharedView}
             className={clsx(
               "h-[42px] w-full sm:w-auto flex items-center justify-center gap-2 px-6 rounded-xl border-2 border-black dark:border-neutral-700 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] dark:shadow-[2px_2px_0px_0px_rgba(255,255,255,0.2)] transition-all font-bold text-sm whitespace-nowrap",
-              isTrashView
+              isTrashView || isSharedView
                 ? "bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-600 border-slate-300 dark:border-slate-700 shadow-none cursor-not-allowed"
                 : "bg-emerald-600 dark:bg-neutral-800 text-white hover:shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] dark:hover:shadow-[4px_4px_0px_0px_rgba(255,255,255,0.2)] hover:-translate-y-1 active:translate-y-0 active:shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] dark:active:shadow-[2px_2px_0px_0px_rgba(255,255,255,0.2)]"
             )}
@@ -796,10 +889,10 @@ export const Dashboard: React.FC = () => {
 
           <button
             onClick={handleCreateDrawing}
-            disabled={isTrashView}
+            disabled={isTrashView || isSharedView}
             className={clsx(
               "h-[42px] w-full sm:w-auto flex items-center justify-center gap-2 px-6 rounded-xl border-2 border-black dark:border-neutral-700 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] dark:shadow-[2px_2px_0px_0px_rgba(255,255,255,0.2)] transition-all font-bold text-sm whitespace-nowrap",
-              isTrashView
+              isTrashView || isSharedView
                 ? "bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-600 border-slate-300 dark:border-slate-700 shadow-none cursor-not-allowed"
                 : "bg-indigo-600 dark:bg-neutral-800 text-white hover:shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] dark:hover:shadow-[4px_4px_0px_0px_rgba(255,255,255,0.2)] hover:-translate-y-1 active:translate-y-0 active:shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] dark:active:shadow-[2px_2px_0px_0px_rgba(255,255,255,0.2)]"
             )}
@@ -817,7 +910,6 @@ export const Dashboard: React.FC = () => {
         onDragOver={(e) => {
           e.preventDefault();
           if (!isDraggingFile && e.dataTransfer.types.includes('Files')) {
-            // Fallback if dragEnter didn't fire (e.g. initial drag start outside window)
             setIsDraggingFile(true);
           }
         }}
@@ -827,16 +919,18 @@ export const Dashboard: React.FC = () => {
           setIsDraggingFile(false);
           dragCounter.current = 0;
           const target = selectedCollectionId === undefined ? null : selectedCollectionId;
+          if (isSharedView) return;
           handleDrop(e, target);
         }}
       >
         {isDraggingFile && (
           <div className="absolute inset-0 z-50 bg-white/80 backdrop-blur-sm border-4 border-dashed border-indigo-400 rounded-3xl flex flex-col items-center justify-center animate-in fade-in duration-200">
-            <div className="bg-indigo-50 p-8 rounded-full mb-6 shadow-sm">
-              <Inbox size={64} className="text-indigo-600" />
+            <div className="bg-indigo-50 p-6 sm:p-8 rounded-full mb-5 sm:mb-6 shadow-sm">
+              <Inbox size={56} className="text-indigo-600 hidden sm:block" />
+              <Inbox size={44} className="text-indigo-600 sm:hidden" />
             </div>
-            <h3 className="text-3xl font-bold text-slate-800 mb-2">Drop files to import</h3>
-            <p className="text-slate-500 text-lg max-w-md text-center">
+            <h3 className="text-2xl sm:text-3xl font-bold text-slate-800 mb-2 text-center px-4">Drop files to import</h3>
+            <p className="text-slate-500 text-base sm:text-lg max-w-sm sm:max-w-md text-center px-4">
               Drop .excalidraw or .json files here to add them to
               <span className="font-bold text-indigo-600 mx-1">
                 {viewTitle}
@@ -850,9 +944,12 @@ export const Dashboard: React.FC = () => {
             <Loader2 size={32} className="animate-spin" />
           </div>
         ) : (
-          <div className={clsx("grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 pb-24 transition-all duration-300", isDraggingFile && "opacity-20 blur-sm")}>
+          <div
+            className={clsx("grid gap-3 sm:gap-4 pb-16 sm:pb-24 transition-all duration-300", isDraggingFile && "opacity-20 blur-sm")}
+            style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))' }}
+          >
             {sortedDrawings.length === 0 ? (
-              <div className="col-span-full flex flex-col items-center justify-center py-32 text-slate-400 dark:text-neutral-500 border-2 border-dashed border-slate-200 dark:border-neutral-700 rounded-3xl bg-slate-50/50 dark:bg-neutral-800/50">
+              <div className="col-span-full flex flex-col items-center justify-center py-16 sm:py-32 text-slate-400 dark:text-neutral-500 border-2 border-dashed border-slate-200 dark:border-neutral-700 rounded-3xl bg-slate-50/50 dark:bg-neutral-800/50">
                 <div className="w-20 h-20 bg-white dark:bg-slate-800 rounded-full shadow-sm border border-slate-100 dark:border-slate-700 flex items-center justify-center mb-6">
                   {isTrashView ? <Trash2 size={32} className="text-slate-300 dark:text-slate-600" /> : <Inbox size={32} className="text-slate-300 dark:text-slate-600" />}
                 </div>
@@ -880,6 +977,7 @@ export const Dashboard: React.FC = () => {
                   drawing={drawing}
                   collections={collections}
                   isSelected={selectedIds.has(drawing.id)}
+                  isShared={isSharedView}
                   onToggleSelection={(e) => handleToggleSelection(drawing.id, e)}
                   onRename={handleRenameDrawing}
                   onDelete={handleDeleteDrawing}
@@ -900,6 +998,15 @@ export const Dashboard: React.FC = () => {
             )}
           </div>
         )}
+
+        <div ref={loaderRef} className="py-8 flex justify-center items-center h-20">
+          {isFetchingMore && (
+            <div className="flex items-center gap-2 text-indigo-600 font-bold animate-in fade-in slide-in-from-bottom-2">
+              <Loader2 size={24} className="animate-spin" />
+              <span>Loading more...</span>
+            </div>
+          )}
+        </div>
       </div>
 
       <ConfirmModal

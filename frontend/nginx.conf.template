@@ -6,6 +6,14 @@ http {
     include /etc/nginx/mime.types;
     default_type application/octet-stream;
 
+    # Preserve upstream TLS context (if present) when proxying to backend.
+    # Falls back to current scheme when no forwarded proto is provided.
+    map $http_x_forwarded_proto $forwarded_proto {
+        default $scheme;
+        ~*^https(?:,|$) https;
+        ~*^http(?:,|$) http;
+    }
+
     sendfile on;
     keepalive_timeout 65;
     gzip on;
@@ -21,10 +29,16 @@ http {
         root /usr/share/nginx/html;
         index index.html;
 
+        add_header X-Frame-Options "DENY" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+        add_header Permissions-Policy "camera=(), microphone=(), geolocation=()" always;
+        add_header Content-Security-Policy "default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; script-src 'self' https://unpkg.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com https://unpkg.com https://cdn.jsdelivr.net data:; img-src 'self' data: blob: https:; connect-src 'self' https: ws: wss:;" always;
+
         # API and WebSocket proxy to backend
         # BACKEND_URL is substituted at container startup (default: backend:8000)
         location /api/ {
-            proxy_pass http://${BACKEND_URL}/;
+            proxy_pass http://__BACKEND_URL__/;
             proxy_http_version 1.1;
             proxy_set_header Upgrade $http_upgrade;
             proxy_set_header Connection 'upgrade';
@@ -32,7 +46,7 @@ http {
             proxy_cache_bypass $http_upgrade;
             proxy_set_header X-Real-IP $remote_addr;
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_set_header X-Forwarded-Proto $forwarded_proto;
             
             # Buffer and timeout settings for large payloads
             proxy_buffering on;
@@ -49,7 +63,7 @@ http {
 
         # WebSocket proxy for Socket.IO
         location /socket.io/ {
-            proxy_pass http://${BACKEND_URL}/socket.io/;
+            proxy_pass http://__BACKEND_URL__/socket.io/;
             proxy_http_version 1.1;
             proxy_set_header Upgrade $http_upgrade;
             proxy_set_header Connection 'upgrade';
@@ -57,7 +71,7 @@ http {
             proxy_cache_bypass $http_upgrade;
             proxy_set_header X-Real-IP $remote_addr;
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_set_header X-Forwarded-Proto $forwarded_proto;
             
             # Longer timeouts for WebSocket connections
             proxy_read_timeout 3600s;
@@ -67,6 +81,14 @@ http {
         # Frontend routes
         location / {
             try_files $uri $uri/ /index.html;
+        }
+
+        # Never cache the HTML shell. Vite builds use hashed asset filenames, so caching
+        # index.html is the primary way users end up stuck on an old UI after upgrades.
+        location = /index.html {
+            add_header Cache-Control "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0" always;
+            expires -1;
+            try_files /index.html =404;
         }
 
         # Cache static assets

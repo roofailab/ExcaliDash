@@ -2,11 +2,49 @@
  * Test utilities for backend integration tests
  */
 import { PrismaClient } from "../generated/client";
+import fs from "fs";
 import path from "path";
 import { execSync } from "child_process";
 
-// Use a separate test database
-const TEST_DB_PATH = path.resolve(__dirname, "../../prisma/test.db");
+const TEST_DB_FILENAME = `test.${process.pid}.${Math.random().toString(16).slice(2)}.db`;
+const TEST_DB_PATH = path.resolve(__dirname, "../../prisma", TEST_DB_FILENAME);
+const DB_PUSH_LOCK_PATH = path.resolve(__dirname, "../../prisma/.test-db-push.lock");
+
+const sleepSync = (ms: number) => {
+  const shared = new Int32Array(new SharedArrayBuffer(4));
+  Atomics.wait(shared, 0, 0, ms);
+};
+
+const withDbPushLock = (fn: () => void) => {
+  const start = Date.now();
+  let fd: number | null = null;
+  while (fd === null) {
+    try {
+      fd = fs.openSync(DB_PUSH_LOCK_PATH, "wx");
+      fs.writeFileSync(fd, String(process.pid));
+    } catch (error) {
+      const err = error as NodeJS.ErrnoException;
+      if (err.code !== "EEXIST") throw error;
+      if (Date.now() - start > 30_000) {
+        throw new Error("Timed out waiting for Prisma db push lock");
+      }
+      sleepSync(50);
+    }
+  }
+
+  try {
+    fn();
+  } finally {
+    try {
+      fs.closeSync(fd);
+    } catch {
+    }
+    try {
+      fs.unlinkSync(DB_PUSH_LOCK_PATH);
+    } catch {
+    }
+  }
+};
 
 /**
  * Get a test Prisma client pointing to the test database
@@ -30,12 +68,17 @@ export const setupTestDb = () => {
   const databaseUrl = `file:${TEST_DB_PATH}`;
   process.env.DATABASE_URL = databaseUrl;
   
-  // Run Prisma migrations to create the test database
   try {
-    execSync("npx prisma db push --skip-generate", {
-      cwd: path.resolve(__dirname, "../../"),
-      env: { ...process.env, DATABASE_URL: databaseUrl },
-      stdio: "pipe",
+    withDbPushLock(() => {
+      execSync("npx prisma db push --skip-generate --force-reset", {
+        cwd: path.resolve(__dirname, "../../"),
+        env: {
+          ...process.env,
+          DATABASE_URL: databaseUrl,
+          RUST_LOG: "info",
+        },
+        stdio: "pipe",
+      });
     });
   } catch (error) {
     console.error("Failed to setup test database:", error);
@@ -47,10 +90,25 @@ export const setupTestDb = () => {
  * Clean up the test database between tests
  */
 export const cleanupTestDb = async (prisma: PrismaClient) => {
-  // Delete all drawings and collections (except Trash)
   await prisma.drawing.deleteMany({});
-  await prisma.collection.deleteMany({
-    where: { id: { not: "trash" } },
+  await prisma.collection.deleteMany({});
+};
+
+/**
+ * Create a test user for testing
+ */
+export const createTestUser = async (prisma: PrismaClient, email: string = "test@example.com") => {
+  const bcrypt = require("bcrypt");
+  const passwordHash = await bcrypt.hash("testpassword", 10);
+  
+  return await prisma.user.upsert({
+    where: { email },
+    update: {},
+    create: {
+      email,
+      passwordHash,
+      name: "Test User",
+    },
   });
 };
 
@@ -58,15 +116,19 @@ export const cleanupTestDb = async (prisma: PrismaClient) => {
  * Initialize test database with required data
  */
 export const initTestDb = async (prisma: PrismaClient) => {
-  // Ensure Trash collection exists
-  const trash = await prisma.collection.findUnique({
-    where: { id: "trash" },
+  const testUser = await createTestUser(prisma);
+  const trashCollectionId = `trash:${testUser.id}`;
+  
+  const trash = await prisma.collection.findFirst({
+    where: { id: trashCollectionId, userId: testUser.id },
   });
   if (!trash) {
     await prisma.collection.create({
-      data: { id: "trash", name: "Trash" },
+      data: { id: trashCollectionId, name: "Trash", userId: testUser.id },
     });
   }
+  
+  return testUser;
 };
 
 /**
@@ -74,14 +136,12 @@ export const initTestDb = async (prisma: PrismaClient) => {
  * This creates a small but valid PNG for testing
  */
 export const generateSampleImageDataUrl = (size: "small" | "medium" | "large" = "small"): string => {
-  // Minimal 1x1 red PNG (smallest valid PNG possible)
   const smallPng = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==";
   
   if (size === "small") {
     return `data:image/png;base64,${smallPng}`;
   }
   
-  // For medium/large, repeat the pattern to create larger payloads
   const repetitions = size === "medium" ? 1000 : 10000;
   const paddedBase64 = smallPng.repeat(repetitions);
   
@@ -93,10 +153,7 @@ export const generateSampleImageDataUrl = (size: "small" | "medium" | "large" = 
  * This is specifically designed to catch the truncation bug from issue #17
  */
 export const generateLargeImageDataUrl = (): string => {
-  // Create a base64 string that's definitely larger than 10000 characters
-  // This simulates a real image that would get truncated by the old code
   const baseImage = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==";
-  // Repeat to create a ~50KB payload
   const largeBase64 = baseImage.repeat(500);
   return `data:image/png;base64,${largeBase64}`;
 };
@@ -196,7 +253,6 @@ export const compareFilesObjects = (original: Record<string, any>, received: Rec
     const origFile = original[key];
     const recvFile = received[key];
     
-    // Check dataURL specifically - this is where truncation would occur
     if (origFile.dataURL !== recvFile.dataURL) {
       differences.push(
         `DataURL mismatch for ${key}: ` +
@@ -204,7 +260,6 @@ export const compareFilesObjects = (original: Record<string, any>, received: Rec
         `received length=${recvFile.dataURL?.length ?? 0}`
       );
       
-      // Check if it was truncated
       if (recvFile.dataURL && origFile.dataURL?.startsWith(recvFile.dataURL.substring(0, 100))) {
         differences.push(`TRUNCATION DETECTED: dataURL was cut short`);
       }

@@ -4,16 +4,41 @@ import { Loader2, CheckCircle2, AlertCircle, X, ChevronUp, ChevronDown } from 'l
 import clsx from 'clsx';
 
 export const UploadStatus: React.FC = () => {
-  const { tasks, clearCompleted, removeTask, isUploading } = useUpload();
+  const { tasks, clearCompleted, clearSuccessful, removeTask, isUploading } = useUpload();
   const [isOpen, setIsOpen] = useState(false);
   const popoverRef = useRef<HTMLDivElement>(null);
+  const autoClearTimerRef = useRef<number | null>(null);
 
-  // Auto-open when upload starts
   useEffect(() => {
     if (isUploading) {
       setIsOpen(true);
     }
   }, [isUploading]);
+
+  const hasActive = tasks.some(t => t.status === 'pending' || t.status === 'uploading' || t.status === 'processing');
+  const hasSuccess = tasks.some(t => t.status === 'success');
+  const hasErrors = tasks.some(t => t.status === 'error');
+
+  useEffect(() => {
+    if (autoClearTimerRef.current) {
+      window.clearTimeout(autoClearTimerRef.current);
+      autoClearTimerRef.current = null;
+    }
+
+    if (!hasActive && hasSuccess) {
+      autoClearTimerRef.current = window.setTimeout(() => {
+        clearSuccessful();
+        if (!hasErrors) setIsOpen(false);
+      }, hasErrors ? 5000 : 1200);
+    }
+
+    return () => {
+      if (autoClearTimerRef.current) {
+        window.clearTimeout(autoClearTimerRef.current);
+        autoClearTimerRef.current = null;
+      }
+    };
+  }, [hasActive, hasSuccess, hasErrors, clearSuccessful]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -32,13 +57,12 @@ export const UploadStatus: React.FC = () => {
 
   if (tasks.length === 0) return null;
 
-  const activeCount = tasks.filter(t => t.status === 'uploading' || t.status === 'processing').length;
+  const activeCount = tasks.filter(t => t.status === 'pending' || t.status === 'uploading' || t.status === 'processing').length;
   const completedCount = tasks.filter(t => t.status === 'success').length;
   const errorCount = tasks.filter(t => t.status === 'error').length;
 
   return (
     <div className="fixed bottom-6 right-6 z-50 flex flex-col items-end gap-2 isolate" ref={popoverRef}>
-      {/* Popover List */}
       {isOpen && (
         <div className="w-80 bg-white dark:bg-neutral-900 rounded-xl border-2 border-black dark:border-neutral-700 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] dark:shadow-[4px_4px_0px_0px_rgba(255,255,255,0.2)] overflow-hidden animate-in slide-in-from-bottom-5 fade-in duration-200 mb-2">
           <div className="p-3 border-b border-slate-100 dark:border-neutral-800 flex items-center justify-between bg-slate-50 dark:bg-neutral-800/50">
@@ -55,7 +79,7 @@ export const UploadStatus: React.FC = () => {
             )}
           </div>
           
-          <div className="max-h-60 overflow-y-auto custom-scrollbar p-1">
+          <div className="max-h-60 overflow-y-auto no-scrollbar p-1">
             {tasks.map((task) => (
               <div key={task.id} className="group flex items-center gap-3 p-2 hover:bg-slate-50 dark:hover:bg-neutral-800 rounded-lg transition-colors">
                 <div className="flex-shrink-0">
@@ -102,7 +126,6 @@ export const UploadStatus: React.FC = () => {
         </div>
       )}
 
-      {/* Floating Toggle Button */}
       <button
         onClick={() => setIsOpen(!isOpen)}
         className={clsx(

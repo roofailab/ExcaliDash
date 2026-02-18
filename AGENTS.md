@@ -1,428 +1,337 @@
-# ExcaliDash Developer Guide
+# AGENTS.md
 
-## What is ExcaliDash?
+This file helps two kinds of agents work on ExcaliDash.
 
-ExcaliDash is a full-stack dashboard application for managing and organizing [Excalidraw](https://excalidraw.com) drawings. It provides a interface for creating, organizing, and collaborating on diagrams with features like collections, real-time collaboration, file import/export, and bulk operations.
+## Project summary (what is ExcaliDash?)
 
-## Project Overview
+ExcaliDash is a self-hosted dashboard and organizer for Excalidraw drawings, with persistent storage and live collaboration.
+Core user-facing features include organizing drawings into collections, search, export/import for backup, and configurable authentication (local and optional OIDC).
 
-### Core Features
+## Helpers (Operations)
 
-- **Drawing Management**: Create, edit, and organize Excalidraw drawings
-- **Collections**: Organize drawings into folders/categories
-- **Real-time Collaboration**: Multiple users can edit drawings simultaneously
-- **Import/Export**: Support for .excalidraw and .json file formats
-- **Bulk Operations**: Multi-select drawings for delete, duplicate, and move operations
-- **Search & Sort**: Find drawings by name with sorting by name, created date, or modified date
-- **Trash System**: Soft delete with permanent delete option
-- **Drag & Drop**: Intuitive file dragging and drawing reordering
-- **Dark/Light Theme**: Automatic theme detection with manual toggle
+- Official supported deployment flow (production): `docker-compose.prod.yml`
+  - `curl -OL https://raw.githubusercontent.com/ZimengXiong/ExcaliDash/main/docker-compose.prod.yml`
+  - `docker compose -f docker-compose.prod.yml pull`
+  - `docker compose -f docker-compose.prod.yml up -d`
+- Production hardening quick checklist:
+  - Pin images to a specific release tag (or digest) instead of `:latest` for reproducible upgrades/rollbacks.
+  - Stable tags are published as `zimengxiong/excalidash-backend:<VERSION>` and `zimengxiong/excalidash-frontend:<VERSION>` (and also `:latest`).
+  - Pre-release tags are published as `:dev` and `:<VERSION>-dev` (and do not update `:latest`).
+  - Set fixed `JWT_SECRET` and `CSRF_SECRET` for portability and multi-instance/redeploy scenarios.
+  - Set `FRONTEND_URL` to your public URL(s) and keep `TRUST_PROXY=false` unless you are behind a trusted proxy hop.
+  - Ensure the backend volume is backed up (SQLite DB + persisted secrets).
+- Re-check production health:
+  - `docker compose -f docker-compose.prod.yml ps`
+  - `docker compose -f docker-compose.prod.yml logs backend --tail=200`
+  - `docker compose -f docker-compose.prod.yml logs -f backend`
+- Upgrade production:
+  - `docker compose -f docker-compose.prod.yml down` (if needed)
+  - `docker compose -f docker-compose.prod.yml pull`
+  - `docker compose -f docker-compose.prod.yml up -d`
+- Check bootstrap/setup signal if onboarding blocks access:
+  - `docker compose -f docker-compose.prod.yml logs backend --tail=200 | grep "BOOTSTRAP SETUP"`
+- For local helper debugging with compose (repo checkout): `docker compose up -d` (uses `docker-compose.yml`; use `-f docker-compose.prod.yml` if you deployed from Docker Hub images)
+- Must-read first for common user issues: `README.md`
 
-### Tech Stack
+### Pinning And Switching Docker Tags
 
-**Frontend:**
+Pin to a stable release (recommended for production):
 
-- React 18 + TypeScript
-- Vite (build tool)
-- Tailwind CSS (styling)
-- Excalidraw (drawing canvas)
-- Socket.io Client (real-time features)
-- React Router (navigation)
-- Lucide React (icons)
-
-**Backend:**
-
-- Node.js + Express
-- TypeScript
-- Prisma ORM
-- SQLite database
-- Socket.io (real-time server)
-
-**Infrastructure:**
-
-- Docker (containerization)
-- Docker Compose (multi-container orchestration)
-
-## Project Structure
-
-```
-ExcaliDash/
-├── README.md                 # Project overview
-├── AGENTS.md                 # This file - developer guide
-├── DOCKER.md                 # Docker documentation
-├── .gitignore               # Git ignore rules
-├── .dockerignore            # Docker ignore rules
-├── docker-compose.yml       # Production Docker setup
-├── docker-compose.prod.yml  # Additional production config
-├── publish-docker.sh        # Docker deployment script
-│
-├── backend/                 # Node.js/Express backend
-│   ├── src/
-│   │   ├── index.ts         # Main server file
-│   │   └── generated/       # Prisma generated client
-│   ├── prisma/
-│   │   ├── schema.prisma    # Database schema
-│   │   ├── migrations/      # Database migrations
-│   │   └── dev.db          # SQLite database (development)
-│   ├── package.json         # Backend dependencies
-│   ├── Dockerfile          # Backend container config
-│   ├── .env.example        # Environment variables template
-│   └── docker-entrypoint.sh # Container startup script
-│
-└── frontend/               # React frontend application
-    ├── src/
-    │   ├── components/     # Reusable UI components
-    │   ├── pages/         # Route components
-    │   ├── hooks/         # Custom React hooks
-    │   ├── context/       # React context providers
-    │   ├── types/         # TypeScript type definitions
-    │   ├── utils/         # Utility functions
-    │   ├── api/           # API client functions
-    │   └── assets/        # Static assets
-    ├── public/            # Public assets
-    ├── package.json       # Frontend dependencies
-    ├── Dockerfile         # Frontend container config
-    ├── vite.config.ts     # Vite configuration
-    ├── tailwind.config.js # Tailwind CSS configuration
-    └── nginx.conf         # Nginx configuration for production
+```yaml
+services:
+  backend:
+    image: zimengxiong/excalidash-backend:0.4.18
+  frontend:
+    image: zimengxiong/excalidash-frontend:0.4.18
 ```
 
-## Getting Started
+Switch to pre-release images (rolling `:dev` tag):
 
-### Prerequisites
-
-- Node.js 18+ and npm
-- Docker and Docker Compose (for containerized development)
-- Git
-
-### Development Setup
-
-#### Option 1: Local Development (Recommended)
-
-1. **Install Backend Dependencies**
-
-   ```bash
-   cd backend
-   npm install
-   ```
-
-2. **Install Frontend Dependencies**
-
-   ```bash
-   cd ../frontend
-   npm install
-   ```
-
-3. **Setup Environment Variables**
-
-   ```bash
-   cd ../backend
-   cp .env.example .env
-   # Edit .env if needed
-   ```
-
-4. **Initialize Database**
-
-   ```bash
-   npx prisma generate
-   npx prisma db push
-   ```
-
-5. **Start Backend Development Server**
-
-   ```bash
-   cd backend
-   npm run dev
-   # Server runs on http://localhost:8000
-   ```
-
-6. **Start Frontend Development Server** (in a new terminal)
-   ```bash
-   cd frontend
-   npm run dev
-   # Frontend runs on http://localhost:5173
-   ```
-
-### Environment Variables
-
-**Backend (.env):**
-
-```bash
-DATABASE_URL="file:./dev.db"
-PORT=8000
-NODE_ENV=development
+```yaml
+services:
+  backend:
+    image: zimengxiong/excalidash-backend:dev
+  frontend:
+    image: zimengxiong/excalidash-frontend:dev
 ```
 
-**Frontend (.env.example):**
+Switch to a specific pre-release build (pinned `:<VERSION>-dev` tag):
 
-```bash
-VITE_API_URL=http://localhost:8000
+```yaml
+services:
+  backend:
+    image: zimengxiong/excalidash-backend:0.4.18-dev
+  frontend:
+    image: zimengxiong/excalidash-frontend:0.4.18-dev
 ```
 
-## Making Changes
+Switch to a one-off custom dev tag (published by `make dev-release NAME=...`):
 
-### Development Workflow
-
-1. **Create a Feature Branch**
-
-   ```bash
-   git checkout -b feature/your-feature-name
-   ```
-
-2. **Make Your Changes**
-
-   - Follow the existing code style and patterns
-   - Add TypeScript types for new features
-   - Update database schema if needed (see Database section)
-
-3. **Test Your Changes**
-
-   - Test both locally and with Docker
-   - Check that existing functionality still works
-
-4. **Commit and Push**
-   ```bash
-   git add .
-   git commit -m "feat: add your feature description"
-   git push origin feature/your-feature-name
-   ```
-
-### Code Style and Standards
-
-- **TypeScript**: Use strict TypeScript typing
-- **Component Structure**: Follow the existing component patterns in `frontend/src/components/`
-- **API Design**: RESTful endpoints in `backend/src/index.ts`
-- **Database**: Use Prisma migrations for schema changes
-- **Styling**: Tailwind CSS classes with the existing design system
-
-### File Organization Guidelines
-
-- **Frontend Components**: Keep related components together
-- **Custom Hooks**: Place in `frontend/src/hooks/`
-- **Utilities**: Place in `frontend/src/utils/`
-- **API Routes**: Add to `backend/src/index.ts`
-- **Database Models**: Update `backend/prisma/schema.prisma`
-
-## Database
-
-### Schema Overview
-
-The application uses two main models:
-
-**Collection:**
-
-- `id` (String, UUID) - Primary key
-- `name` (String) - Collection name
-- `drawings` (Relation) - Related drawings
-- `createdAt`, `updatedAt` (DateTime) - Timestamps
-
-**Drawing:**
-
-- `id` (String, UUID) - Primary key
-- `name` (String) - Drawing name
-- `elements` (String, JSON) - Excalidraw elements
-- `appState` (String, JSON) - Excalidraw application state
-- `files` (String, JSON) - Associated files
-- `preview` (String, SVG) - Thumbnail preview
-- `version` (Int) - Version number for conflict detection
-- `collectionId` (String, nullable) - Foreign key to Collection
-- `createdAt`, `updatedAt` (DateTime) - Timestamps
-
-### Making Database Changes
-
-1. **Modify the Schema**
-   Edit `backend/prisma/schema.prisma`
-
-2. **Create a Migration**
-
-   ```bash
-   cd backend
-   npx prisma migrate dev --name your_migration_name
-   ```
-
-3. **Update TypeScript Types**
-
-   ```bash
-   npx prisma generate
-   ```
-
-4. **Test the Changes**
-   ```bash
-   npx prisma db push  # Apply to development database
-   ```
-
-### Database Commands
-
-```bash
-# Generate Prisma client
-npx prisma generate
-
-# Create and apply migration
-npx prisma migrate dev --name migration_name
-
-# Reset database (development only)
-npx prisma migrate reset
-
-# View database in Prisma Studio
-npx prisma studio
-
-# Deploy migrations to production
-npx prisma migrate deploy
+```yaml
+services:
+  backend:
+    image: zimengxiong/excalidash-backend:0.4.18-dev-issue38
+  frontend:
+    image: zimengxiong/excalidash-frontend:0.4.18-dev-issue38
 ```
 
-## API Documentation
+## Contributors (Code Changes)
 
-### Base URL
+- Architecture map: backend (`backend/src`), frontend (`frontend/src`)
+- Config source of truth: `backend/src/config.ts` (env + validation)
+- Entry server init: `backend/src/index.ts`
+- API client: `frontend/src/api/index.ts`
+- Realtime/editor behavior: `frontend/src/pages/Editor.tsx`
+- Deployment flow: `docker-compose*.yml`, `backend/Dockerfile`, `frontend/Dockerfile`, entrypoint scripts
+- Build/dev commands: `make build`, `npm test`, `make test-all`, `make test-e2e`
+- Development contributor flow:
+  - `make install` → `make dev`
+  - stop with `make dev-stop`
+  - `make dev-backend` / `make dev-frontend` if you only need one side
 
-- Development: `http://localhost:8000`
-- Production: Configured via environment variables
+## Helper workflow
 
-### Endpoints
+Prioritize operational steps, then point to the exact commands or files.
 
-#### Drawings
+For setup and troubleshooting, start here.
 
-- `GET /drawings` - List drawings (supports search and collection filtering)
-- `GET /drawings/:id` - Get single drawing
-- `POST /drawings` - Create new drawing
-- `PUT /drawings/:id` - Update drawing
-- `DELETE /drawings/:id` - Delete drawing permanently
-- `POST /drawings/:id/duplicate` - Duplicate drawing
+- Goal check: confirm whether the user needs local dev, Docker Compose from Docker Hub images, locally built Docker, or E2E.
+- Check whether the problem is already known:
+  - If the agent has GitHub access, search issues for the exact error text/symptom and link the closest match.
+  - If the agent cannot browse, ask the user to search and share the issue link (or paste issue text).
+  - Note: `git` does not provide a native way to browse GitHub Issues. Use the web UI or GitHub CLI (`gh`).
+  - Issue tracker: `https://github.com/ZimengXiong/ExcaliDash/issues`
+  - Search tip: `https://github.com/ZimengXiong/ExcaliDash/issues?q=is%3Aissue+<paste+error+snippet>`
+  - If `gh` is available:
+    - Set repo: `gh repo set-default ZimengXiong/ExcaliDash`
+    - Search/list: `gh issue list --search "<error snippet>"`
+    - View: `gh issue view <number> -w`
+    - Create (guided): `gh issue create`
+    - If missing, prompt the user to install `gh` (recommended) or use the web UI.
+- Use the `README.md` and `e2e/README.md` as the primary operator references.
+- If the question is about one error, find the nearest environment or script path before proposing code changes.
+- Encourage filing an issue when needed (new bug / unclear docs / missing troubleshooting):
+  - Ask the user to include:
+    - Their deployment mode: Docker Hub compose (`docker-compose.prod.yml`) vs repo compose (`docker-compose.yml`) vs `make` vs direct `npm`
+    - App version tag(s) and image tags (or `VERSION` if built from source)
+    - OS/arch (for example `linux/arm64`) and whether a reverse proxy is used
+    - Sanitized relevant env vars: `AUTH_MODE`, `TRUST_PROXY`, `FRONTEND_URL` (do not share secrets)
+    - Logs: `docker compose ... logs backend --tail=200` and the exact error text
+    - Repro steps and expected vs actual behavior
+  - If the agent can reproduce or pinpoint the root cause, summarize findings and link relevant files/lines.
+- If startup is blocked, collect these values from the user first:
+  - Are they using Docker Hub compose (`docker-compose.prod.yml`), repo compose (`docker-compose.yml`), `make`, or direct `npm`?
+  - If using Docker Hub compose: `docker compose -f docker-compose.prod.yml ps` and `docker compose -f docker-compose.prod.yml logs backend --tail=200`
+  - If using repo compose: `docker compose ps` and `docker compose logs backend --tail=200`
+  - If using a git clone: `git status`
+  - Which auth mode is configured (`AUTH_MODE`)?
 
-#### Collections
+## Contributor workflow
 
-- `GET /collections` - List all collections
-- `POST /collections` - Create new collection
-- `PUT /collections/:id` - Update collection
-- `DELETE /collections/:id` - Delete collection (moves drawings to unorganized)
+Understand runtime first, then touch code with local tests if requested.
 
-#### System
+- Confirm behavior in three layers before editing:
+  - docs (`README.md`, this file)
+  - runtime wiring (`docker-*.yml`, `Dockerfile`, entrypoints)
+  - source (`backend/src`, `frontend/src`)
+- Preserve patterns used in the repo:
+  - backend TypeScript server in `backend/src`
+  - frontend React/Vite app in `frontend/src`
+- Prefer minimal edits and keep env-sensitive behavior documented before/after changes.
+- Do not change migration/secret handling unless explicitly requested.
 
-- `GET /health` - Health check endpoint
+## Repository map (high signal)
 
-### Real-time Events (Socket.io)
+- `backend/`: Express API, Prisma schema, auth, sockets, scripts, Docker runtime.
+- `frontend/`: React UI, API client wiring, Vite config/build pipeline.
+- `e2e/`: Playwright tests and compose-based test runner.
+- `docker-compose.yml`: local compose setup for source builds.
+- `docker-compose.prod.yml`: production-style compose using published images.
+- `Makefile`: repo-wide orchestration commands.
+- `README.md`: user-facing installation and operational docs.
+- `VERSION`: version string used in builds.
+  - Local OIDC helper: `docker-compose.oidc.yml` + `oidc/keycloak/realm-excalidash.json` (Keycloak container + realm seed; no users/passwords committed)
 
-#### Client → Server
+## Quick setup: local development
 
-- `join-room` - Join drawing room for collaboration
-- `cursor-move` - Broadcast cursor position
-- `element-update` - Broadcast drawing changes
-- `user-activity` - Update user active status
+Dependencies:
 
-#### Server → Client
+- Node.js 20+
+- npm
+- SQLite-supported environment (default)
+- Docker + Docker Compose if using compose path
 
-- `presence-update` - User presence in room
-- `cursor-move` - Other user's cursor position
-- `element-update` - Other user's drawing changes
+Install:
 
-### Environment Setup
+- `npm i` in each package: `make install` (or `cd backend && npm install`, `cd frontend && npm install`, `cd e2e && npm install`)
 
-**Production Environment Variables:**
+Start backend + frontend in tmux:
 
-- `DATABASE_URL` - SQLite database path
-- `PORT` - Backend server port
-- `NODE_ENV` - Set to "production"
+- `make dev` (starts `backend` and `frontend` in a split tmux session; requires `tmux`)
+- `make dev-stop` to stop
+- Backend dev env:
+  - `cd backend`
+  - `cp .env.example .env`
+  - `npx prisma generate`
+  - `npx prisma db push`
+  - `npm run dev`
+- Frontend dev env:
+  - `cd frontend`
+  - `cp .env.example .env`
+  - `npm install`
+  - `npm run dev`
 
-## Troubleshooting
+Docker quickstart:
 
-### Common Issues
+- `docker compose -f docker-compose.prod.yml up -d` (official production path, pulls and runs image-based containers)
+- `docker compose -f docker-compose.prod.yml pull` and `up -d` for image-based deploy
+- Optional local-compose quickstart for source testing: `docker compose up -d` (uses `docker-compose.yml`)
+- App default host ports:
+  - Compose production/frontend: `http://localhost:6767`
+  - Backend internal port: `8000`
 
-1. **Database Connection Error**
+E2E quickstart:
 
-   - Check that the database file exists in `backend/prisma/dev.db`
-   - Ensure proper permissions on the database file
-   - Verify DATABASE_URL in .env
+- `cd e2e && npm install`
+- `npx playwright install chromium`
+- `npm test`
+- If using existing services: `NO_SERVER=true npm test`
+- Dockerized: `npm run docker:test`
 
-2. **Prisma Client Issues**
+## Environment variables
 
-   - Run `npx prisma generate` to regenerate client
-   - Clear `node_modules` and reinstall dependencies
+Backend runtime reads `.env` via `backend/.env` and `backend/src/config.ts`.
+Frontend runtime uses Vite `import.meta.env` values from `frontend/.env` and build-time defines.
 
-3. **Port Already in Use**
+Source of truth:
 
-   - Change PORT in backend/.env
-   - Update frontend API URL accordingly
+- Backend: `backend/src/config.ts` and `backend/.env.example`
+- Frontend: `frontend/.env.example` and `frontend/vite.config.ts`
 
-4. **Docker Build Failures**
+Backend base variables:
 
-   - Check Dockerfile syntax
-   - Ensure all dependencies are listed in package.json
-   - Verify build context in docker-compose.yml
+- `PORT` (default `8000`)
+- `NODE_ENV` (`development` / `production`)
+- `DATABASE_URL` (`file:...` default via `backend/.env` and resolver)
+- `FRONTEND_URL` (comma-separated allowed origins)
+- `TRUST_PROXY` (`true`, `false`, or positive hop count)
+- `AUTH_MODE` (`local`, `hybrid`, `oidc_enforced`)
+- `JWT_SECRET` (required when running backend with `NODE_ENV=production`; Docker entrypoint can auto-generate + persist for single-instance setups)
+- `CSRF_SECRET` (recommended for stable CSRF across restarts; Docker entrypoint can auto-generate + persist for single-instance setups)
+- `JWT_ACCESS_EXPIRES_IN` (default `15m`)
+- `JWT_REFRESH_EXPIRES_IN` (default `7d`)
+- `RATE_LIMIT_MAX_REQUESTS` (default `1000`)
+- `CSRF_MAX_REQUESTS` (default `60`)
+- `ENABLE_PASSWORD_RESET` (`true` to enable)
+- `ENABLE_REFRESH_TOKEN_ROTATION` (`true`/`false`, default `true`)
+- `ENABLE_AUDIT_LOGGING` (`true`/`false`, default `false`)
+- `BOOTSTRAP_SETUP_CODE_TTL_MS` (default `900000`)
+- `BOOTSTRAP_SETUP_CODE_MAX_ATTEMPTS` (default `10`)
+- `UPDATE_CHECK_OUTBOUND` (`true`/`false`/`1`/`yes`, default `true`)
+- `UPDATE_CHECK_GITHUB_TOKEN` (optional token for GitHub API)
+- `GITHUB_TOKEN` (fallback token if update token missing)
+- `DRAWINGS_CACHE_TTL_MS` (ms, default `5000`)
+- `DEBUG_CSRF` (`true` enables debug logs)
+- `DISABLE_ONBOARDING_GATE` (`true` bypasses onboarding gate; not recommended)
+- `OIDC_PROVIDER_NAME` (default `OIDC`, optional unless OIDC mode enabled)
+- `OIDC_ISSUER_URL` (required in `hybrid`/`oidc_enforced`)
+- `OIDC_CLIENT_ID` (required in OIDC modes)
+- `OIDC_CLIENT_SECRET` (optional; required for confidential clients, omitted for public clients)
+- `OIDC_REDIRECT_URI` (required and HTTPS in production in OIDC modes)
+- `OIDC_SCOPES` (default `openid profile email`)
+- `OIDC_EMAIL_CLAIM` (default `email`)
+- `OIDC_EMAIL_VERIFIED_CLAIM` (default `email_verified`)
+- `OIDC_REQUIRE_EMAIL_VERIFIED` (default `true`)
+- `OIDC_JIT_PROVISIONING` (default `true`)
+- `OIDC_FIRST_USER_ADMIN` (default `true`)
 
-5. **Frontend Not Loading**
-   - Check browser console for errors
-   - Verify API_URL in frontend environment
-   - Check network connectivity to backend
+Backend Docker/env control variables:
 
-## Architecture Details
+- `RUN_MIGRATIONS` (`true`/`1` default true in entrypoint)
+- `MIGRATION_LOCK_TIMEOUT_SECONDS` (default `120`)
+- `JWT_SECRET` and `CSRF_SECRET` persistence support (`.jwt_secret`, `.csrf_secret` in volume)
 
-### Frontend Architecture
+Frontend variables:
 
-The frontend follows a component-based architecture with:
+- `VITE_API_URL` (default `/api`)
+- `VITE_APP_VERSION` (from build-time metadata)
+- `VITE_APP_BUILD_LABEL` (build metadata label)
+- `BACKEND_URL` (frontend container entrypoint only; default `backend:8000`, injected into nginx template)
 
-- **Pages**: Route-level components (`src/pages/`)
-- **Components**: Reusable UI components (`src/components/`)
-- **Hooks**: Custom React hooks for state management (`src/hooks/`)
-- **Context**: Global state providers (`src/context/`)
-- **Utils**: Utility functions (`src/utils/`)
+E2E variables:
 
-Key patterns:
+- `BASE_URL` (default `http://localhost:5173`)
+- `API_URL` (default `http://localhost:8000`)
+- `HEADED` (`true` to show browser)
+- `NO_SERVER` (`true` to skip starting servers)
+- `CI` (ci-mode behavior in Playwright config)
 
-- State management using React hooks and context
-- API calls centralized in `src/api/`
-- TypeScript for type safety throughout
-- Tailwind CSS for styling with custom design tokens
+## Feature flags and operational switches
 
-### Backend Architecture
+- `ENABLE_PASSWORD_RESET`: enable/disable password reset flow.
+- `ENABLE_REFRESH_TOKEN_ROTATION`: control refresh-token rotation behavior.
+- `ENABLE_AUDIT_LOGGING`: enable/disable audit event logging.
+- `UPDATE_CHECK_OUTBOUND`: disable outbound version check traffic.
+- `DISABLE_ONBOARDING_GATE`: bypass first-run onboarding guard (not recommended in production).
+- `RUN_MIGRATIONS`: run migrations in backend container startup (`true` default).
+- `MIGRATION_LOCK_TIMEOUT_SECONDS`: wait window for startup migration lock.
+- `DRAWINGS_CACHE_TTL_MS`: cache duration for list endpoint responses.
+- `DEBUG_CSRF`: log CSRF debug output for troubleshooting.
+- `BOOTSTRAP_SETUP_CODE_TTL_MS`: bootstrap setup code expiry.
+- `BOOTSTRAP_SETUP_CODE_MAX_ATTEMPTS`: max bootstrap attempts before code refresh.
 
-The backend follows a traditional MVC pattern:
+## Reverse proxy / Kubernetes notes
 
-- **Routes**: API endpoints in `src/index.ts`
-- **Models**: Prisma schema definitions
-- **Services**: Business logic (can be extracted to separate files)
-- **Middleware**: CORS, JSON parsing, etc.
+- `FRONTEND_URL` is the origin allow-list for frontend callbacks and API origin checks.
+- `TRUST_PROXY` should be `1` for one trusted proxy hop, or `false` when traffic is direct.
+- `BACKEND_URL` is injected into `frontend/nginx.conf.template` to route:
+  - `/api/` to backend API
+  - `/socket.io/` to backend websocket
+- For Kubernetes, set `BACKEND_URL` to service DNS (example `excalidash-backend.default.svc.cluster.local:8000`).
+- Ensure TLS termination and `X-Forwarded-Proto` are consistent with proxy headers; auth + sockets depend on this.
 
-Real-time features:
+## Architecture notes for contributor agents
 
-- Socket.io for WebSocket connections
-- Room-based collaboration
-- Presence tracking
-- Cursor position broadcasting
+Backend entrypoint flow:
 
-### Data Flow
+- `backend/src/config.ts` loads and validates environment variables.
+- `backend/src/index.ts` creates express app, socket.io server, middleware, routes, and startup-time guards.
+- `backend/src/auth.ts`, `backend/src/auth/*`, and `backend/src/routes/*` contain auth/session/onboarding logic.
+- `backend/src/db/prisma.ts` wraps Prisma client and caches in non-production.
+- `backend/src/security.ts` and `backend/src/routes/system/update.ts` contain request security and update-check controls.
+- Migration handling for runtime is in `backend/docker-entrypoint.sh`.
+- Build pipeline for runtime includes Prisma generation and TypeScript compile in `backend/Dockerfile`.
 
-1. **Drawing Creation**: Frontend → API → Database
-2. **Real-time Updates**: Frontend → Socket.io → Other Frontends
-3. **Data Persistence**: Regular API calls for saving state
-4. **File Management**: Frontend → API → Database (as JSON)
+Frontend architecture notes:
 
-## Contributing
+- `frontend/src/api/index.ts` holds API client and auth/update endpoints.
+- `frontend/src/pages/` contains route-level features.
+- `frontend/src/context/` contains auth/theme state.
+- `frontend/src/pages/Editor.tsx` wires Socket.IO and live collaboration.
+- `frontend/vite.config.ts` sets Vite proxy to backend in local dev and compile-time app metadata.
+- Production serving and backend proxy are handled by `frontend/Dockerfile`, `frontend/nginx.conf.template`, `frontend/docker-entrypoint.sh`.
 
-### Pull Request Process
+## Makefile command map
 
-1. **Ensure all tests pass**
-2. **Update documentation** if needed
-3. **Add commit messages** following conventional commits
-4. **Request review** from maintainers
+- Install: `make install`, `make dev`, `make dev-backend`, `make dev-frontend`
+- Build/test/lint: `make build`, `make lint`, `make test`, `make test-all`, `make test-e2e`, `make test-e2e-docker`
+- Docker: `make docker-build`, `make docker-run`, `make docker-run-detached`, `make docker-ps`, `make docker-logs`, `make docker-down`
+- Admin/ops helpers: backend scripts under `backend/package.json` (`admin:recover`, `dev:simulate-auth-onboarding:*`) and `backend/scripts/*`
 
-### Commit Message Format
+## Decision matrix for agent response style
 
-```
-type(scope): description
+- For helper agents: prefer concise operational steps, likely culprit ordering, and exact command snippets.
+- For contributor agents: include file-level references and rationale in your diff note (why file was touched, where config is validated).
+- When asked for design or behavior explanations, include:
+  - Config source file
+  - Route or component entry point
+  - Why this logic exists based on existing defaults/constraints
 
-feat(auth): add user authentication
-fix(editor): resolve drawing save issue
-docs(api): update endpoint documentation
-```
+## Safe first actions for unknown issues
 
-Types: `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `chore`
-
-## Resources
-
-- [Excalidraw Documentation](https://docs.excalidraw.com/)
-- [Prisma Documentation](https://www.prisma.io/docs/)
-- [React Documentation](https://react.dev/)
-- [Socket.io Documentation](https://socket.io/docs/)
-- [Tailwind CSS Documentation](https://tailwindcss.com/docs)
-- [Vite Documentation](https://vitejs.dev/guide/)
-
-_This documentation is maintained alongside the codebase. Please update it when making significant architectural changes._
+- Confirm env file presence and variables
+- Check compose/backend logs before code changes
+- Reproduce with minimal path:
+  - `make dev`
+  - open frontend `http://localhost:6767`
+- For startup crashes: inspect missing environment validation errors from `backend/src/config.ts` and entrypoint migration/secrets log lines.

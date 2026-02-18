@@ -1,43 +1,74 @@
-CSRF Protection (8a78b2b)
+# ExcaliDash v0.4.27-dev
 
-  - Implemented comprehensive CSRF (Cross-Site Request Forgery) protection for enhanced security
-  - Added new backend/src/security.ts module for security utilities
-  - Frontend API layer now handles CSRF tokens automatically
-  - Added integration tests for CSRF validation
+Release date: 2026-02-18
 
-  Upload Progress Indicator (8f9b9b4)
+## Upgrading
 
-  - Added a visual upload progress bar when users upload files
-  - New UploadContext for managing upload state across components
-  - New UploadStatus component displaying real-time upload progress
-  - Save status indicator when navigating back from the editor
-  - Improved error handling and recovery for failed uploads
+<details>
+<summary>Show upgrade steps</summary>
 
-  Bug Fixes
+### Data safety checklist
 
-  - Fixed broken e2e tests (cae8f3c)
-  - Replaced deprecated substr() with substring()
-  - Fixed stale state issues in error handling
-  - Fixed missing useEffect dependencies
-  - Fixed CSS class conflicts in progress bar styling
-  - Added error recovery for save state in Editor
+- Back up backend volume (`dev.db`, secrets) before upgrading.
+- Let migrations run on startup (`RUN_MIGRATIONS=true`) for normal deploys.
+- Run `docker compose -f docker-compose.prod.yml logs backend --tail=200` after rollout and verify startup/migration status.
 
-  Infrastructure
+### Recommended upgrade (Docker Hub compose)
 
-  - Updated docker-compose configurations with new environment variables
-  - E2E test suite improvements and reliability fixes
-  - Added Kubernetes deployment note in README
+```bash
+docker compose -f docker-compose.prod.yml pull
+docker compose -f docker-compose.prod.yml up -d
+```
 
-### Kubernetes
+### Pin images to this release (recommended for reproducible deploys)
 
-  A `CSRF_SECRET` environment variable is now required for CSRF protection. Generate a secure 32+ character random string:
+Edit `docker-compose.prod.yml` and pin the release tags:
 
-  ```bash
-  openssl rand -base64 32
+```yaml
+services:
+  backend:
+    image: zimengxiong/excalidash-backend:v0.4.27-dev
+  frontend:
+    image: zimengxiong/excalidash-frontend:v0.4.27-dev
+```
 
-  Add it to your deployment:
-  - Docker Compose: Add CSRF_SECRET=<your-secret> to the backend service environment
-  - Kubernetes: Add to your ConfigMap/Secret and reference in the backend deployment
+Example:
 
-  If not set, the backend will refuse to start.
-  ```
+```bash
+docker compose -f docker-compose.prod.yml up -d
+```
+
+</details>
+
+## RC for v0.4.27 release
+
+### Authentication and user management
+
+- Added a full authentication platform with local registration/login and password reset.
+- Added bootstrap setup and onboarding controls for first admin creation.
+- Added admin and user-management flows, including profile and impersonation-aware UI behavior.
+- Added OIDC-enabled auth options and hardened token/session controls for hybrid deployments.
+
+### Sharing, collaboration, and permissions
+
+- Added sharing options between users and permission-aware sharing behavior.
+- Enforced immediate permission revocation during collaboration sessions.
+- Improved real-time ordering synchronization across collaborators.
+- Reduced shared-view leakage of sensitive owner metadata.
+
+### Security and reliability
+
+- Tightened CSRF handling for auth, session, and socket workflows.
+- Added additional security testing around sandboxing, login attempts, and request validation.
+- Added audit event scaffolding and improved startup/migration safety.
+
+### Import/export and data workflows
+
+- Added import/export support for backup and restore use-cases.
+- Improved exported drawing metadata handling and streaming behavior.
+- Improved upload/import compatibility and preview/update behavior during edits.
+
+### Collaboration and UI experience
+
+- Added profile/admin pages, dashboard and settings improvements.
+- Reduced fragile browser-context behavior in update checks, editor state handling, and collaboration flows.

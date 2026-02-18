@@ -6,7 +6,6 @@ import DOMPurify from "dompurify";
 import { JSDOM } from "jsdom";
 import crypto from "crypto";
 
-// Create a DOM environment for DOMPurify (Node.js compatibility)
 const window = new JSDOM("").window;
 const purify = DOMPurify(window);
 
@@ -18,19 +17,19 @@ export interface SecurityConfig {
   maxDataUrlSize: number;
 }
 
-// Default configuration
 const defaultConfig: SecurityConfig = {
   maxDataUrlSize: 10 * 1024 * 1024, // 10MB
 };
 
-// Current active configuration
 let activeConfig: SecurityConfig = { ...defaultConfig };
 
 /**
  * Configure security settings
  * @param config Partial configuration to merge with defaults
  */
-export const configureSecuritySettings = (config: Partial<SecurityConfig>): void => {
+export const configureSecuritySettings = (
+  config: Partial<SecurityConfig>
+): void => {
   activeConfig = { ...activeConfig, ...config };
 };
 
@@ -99,11 +98,45 @@ export const sanitizeHtml = (input: string): string => {
 export const sanitizeSvg = (svgContent: string): string => {
   if (typeof svgContent !== "string") return "";
 
-  return purify
+  const safeImageDataUrlPattern =
+    /^data:image\/(?:png|jpe?g|gif|webp|avif|bmp);base64,[a-z0-9+/=\s]+$/i;
+
+  const sanitizeSvgImageTags = (content: string): string =>
+    content.replace(/<image\b[^>]*>/gi, (imageTag) => {
+      const hrefMatch =
+        imageTag.match(/\shref\s*=\s*"([^"]*)"/i) ??
+        imageTag.match(/\shref\s*=\s*'([^']*)'/i) ??
+        imageTag.match(/\sxlink:href\s*=\s*"([^"]*)"/i) ??
+        imageTag.match(/\sxlink:href\s*=\s*'([^']*)'/i);
+
+      const hrefValue = hrefMatch?.[1]?.trim();
+      if (!hrefValue || !safeImageDataUrlPattern.test(hrefValue)) {
+        return "";
+      }
+
+      const withoutXlinkHref = imageTag.replace(
+        /\sxlink:href\s*=\s*(?:"[^"]*"|'[^']*')/gi,
+        ""
+      );
+
+      if (/\shref\s*=/i.test(withoutXlinkHref)) {
+        return withoutXlinkHref.replace(
+          /\shref\s*=\s*(?:"[^"]*"|'[^']*')/i,
+          ` href="${hrefValue}"`
+        );
+      }
+
+      return withoutXlinkHref.replace(/<image\b/i, `<image href="${hrefValue}"`);
+    });
+
+  const sanitized = purify
     .sanitize(svgContent, {
       ALLOWED_TAGS: [
         "svg",
+        "defs",
+        "pattern",
         "g",
+        "image",
         "rect",
         "circle",
         "ellipse",
@@ -115,6 +148,12 @@ export const sanitizeSvg = (svgContent: string): string => {
         "tspan",
       ],
       ALLOWED_ATTR: [
+        "xmlns",
+        "xmlns:xlink",
+        "version",
+        "id",
+        "viewBox",
+        "preserveAspectRatio",
         "x",
         "y",
         "width",
@@ -131,14 +170,29 @@ export const sanitizeSvg = (svgContent: string): string => {
         "points",
         "d",
         "fill",
+        "fill-opacity",
+        "fill-rule",
         "stroke",
         "stroke-width",
+        "stroke-opacity",
+        "stroke-linecap",
+        "stroke-linejoin",
+        "stroke-miterlimit",
+        "stroke-dasharray",
+        "stroke-dashoffset",
         "opacity",
         "transform",
+        "vector-effect",
+        "patternUnits",
+        "patternContentUnits",
         "font-size",
         "font-family",
+        "font-weight",
+        "letter-spacing",
         "text-anchor",
         "dominant-baseline",
+        "href",
+        "xlink:href",
       ],
       FORBID_TAGS: [
         "script",
@@ -147,10 +201,8 @@ export const sanitizeSvg = (svgContent: string): string => {
         "object",
         "embed",
         "use",
-        "image",
         "style",
         "link",
-        "defs",
         "symbol",
         "marker",
         "clipPath",
@@ -164,17 +216,16 @@ export const sanitizeSvg = (svgContent: string): string => {
         "onmouseover",
         "onfocus",
         "onblur",
-        "href",
-        "xlink:href",
         "src",
         "action",
         "style",
         "class",
-        "id",
       ],
       KEEP_CONTENT: true,
     })
     .trim();
+
+  return sanitizeSvgImageTags(sanitized).trim();
 };
 
 export const sanitizeText = (
@@ -318,10 +369,13 @@ export const appStateSchema = z
       .optional()
       .nullable(),
     currentItemRoundness: z
-      .object({
-        type: z.enum(["round", "sharp"]),
-        value: z.number().finite().min(0).max(1),
-      })
+      .union([
+        z.enum(["sharp", "round"]),
+        z.object({
+          type: z.enum(["round", "sharp"]),
+          value: z.number().finite().min(0).max(1),
+        }),
+      ])
       .optional()
       .nullable(),
     currentItemFontSize: z
@@ -411,13 +465,10 @@ export const sanitizeDrawingData = (data: {
       sanitizedPreview = sanitizeSvg(sanitizedPreview);
     }
 
-    // Sanitize files object with special handling for dataURL
     let sanitizedFiles = data.files;
     if (typeof sanitizedFiles === "object" && sanitizedFiles !== null) {
-      // Create a deep copy to avoid mutating the original input
       sanitizedFiles = structuredClone(sanitizedFiles);
 
-      // Safe image MIME types that we allow for dataURL (case-insensitive)
       const safeImageTypes = [
         "data:image/png",
         "data:image/jpeg",
@@ -426,64 +477,58 @@ export const sanitizeDrawingData = (data: {
         "data:image/webp",
       ];
 
-      // Dangerous URL protocols to block entirely
-      const dangerousProtocols = [/^javascript:/i, /^vbscript:/i, /^data:text\/html/i];
+      const dangerousProtocols = [
+        /^javascript:/i,
+        /^vbscript:/i,
+        /^data:text\/html/i,
+      ];
 
-      // Suspicious patterns for security validation within data URLs
-      const suspiciousPatterns = [/<script/i, /javascript:/i, /on\w+\s*=/i, /<iframe/i];
+      const suspiciousPatterns = [
+        /<script/i,
+        /javascript:/i,
+        /on\w+\s*=/i,
+        /<iframe/i,
+      ];
 
-      // Maximum size for dataURL (configurable, default 10MB to prevent DoS)
       const MAX_DATAURL_SIZE = activeConfig.maxDataUrlSize;
 
-      // Iterate over each file in the dictionary
       for (const fileId in sanitizedFiles) {
         const file = sanitizedFiles[fileId];
         if (typeof file === "object" && file !== null) {
-          // Sanitize each property of the file object
           for (const key in file) {
             const value = file[key];
             if (typeof value === "string") {
-              // Special handling for dataURL: allow it to be long if it's a valid image data URL
               if (key === "dataURL") {
                 const normalizedValue = value.toLowerCase();
 
-                // First, check for dangerous protocols - block these entirely
-                const hasDangerousProtocol = dangerousProtocols.some((pattern) =>
-                  pattern.test(value)
+                const hasDangerousProtocol = dangerousProtocols.some(
+                  (pattern) => pattern.test(value)
                 );
 
                 if (hasDangerousProtocol) {
-                  // Block dangerous URLs entirely
                   file[key] = "";
                   continue;
                 }
 
-                // Check if it's a safe image type
                 const isSafeImageType = safeImageTypes.some((type) =>
                   normalizedValue.startsWith(type)
                 );
 
                 if (isSafeImageType) {
-                  // Check for suspicious content and size limits
-                  const hasSuspiciousContent = suspiciousPatterns.some((pattern) =>
-                    pattern.test(value)
+                  const hasSuspiciousContent = suspiciousPatterns.some(
+                    (pattern) => pattern.test(value)
                   );
                   const isTooLarge = value.length > MAX_DATAURL_SIZE;
 
                   if (hasSuspiciousContent || isTooLarge) {
-                    // Clear suspicious or oversized data URLs
                     file[key] = "";
                   } else {
-                    // Keep the base64-encoded image data URL as-is
                     file[key] = value;
                   }
                 } else {
-                  // Not a safe image type and not a dangerous protocol
-                  // Sanitize as text but this likely means it's invalid anyway
                   file[key] = sanitizeText(value, 1000);
                 }
               } else {
-                // For all other string fields (id, mimeType, etc.), apply strict sanitization
                 file[key] = sanitizeText(value, 1000);
               }
             }
@@ -528,30 +573,12 @@ export const validateImportedDrawing = (data: any): boolean => {
   }
 };
 
-// ============================================================================
-// CSRF Protection
-// ============================================================================
 
 const CSRF_TOKEN_HEADER = "x-csrf-token";
 const CSRF_TOKEN_EXPIRY_MS = 24 * 60 * 60 * 1000; // 24 hours
 const CSRF_TOKEN_FUTURE_SKEW_MS = 5 * 60 * 1000; // 5 minutes clock skew tolerance
 const CSRF_NONCE_BYTES = 16;
 const CSRF_TOKEN_MAX_LENGTH = 2048; // sanity limit against abuse
-
-/**
- * IMPORTANT (Horizontal Scaling / K8s)
- * -----------------------------------
- * CSRF tokens must validate across multiple stateless instances.
- *
- * The prior in-memory Map-based token store breaks under horizontal scaling
- * because each pod has its own memory. This implementation is stateless:
- *
- * - Token payload: { ts, nonce }
- * - Signature: HMAC_SHA256(secret, `${clientId}|${ts}|${nonce}`)
- *
- * As long as all pods share the same `CSRF_SECRET`, any pod can validate
- * any token without shared state (works on Kubernetes).
- */
 
 let cachedCsrfSecret: Buffer | null = null;
 const getCsrfSecret = (): Buffer => {
@@ -563,18 +590,15 @@ const getCsrfSecret = (): Buffer => {
     return cachedCsrfSecret;
   }
 
-  // If not configured, generate an ephemeral secret for this process.
-  // This keeps single-instance deployments working out of the box, but:
-  // - Horizontal scaling will BREAK unless CSRF_SECRET is set and shared.
   cachedCsrfSecret = crypto.randomBytes(32);
   const envLabel = process.env.NODE_ENV ? ` (${process.env.NODE_ENV})` : "";
   console.warn(
     `[SECURITY WARNING] CSRF_SECRET is not set${envLabel}.\n` +
-    `Using an ephemeral per-process secret.\n` +
-    `  - Tokens will expire on container restart\n` +
-    `  - Horizontal scaling (k8s) will NOT work\n` +
-    `  - Generate a secret: openssl rand -base64 32\n` +
-    `  - Set environment variable: CSRF_SECRET=<generated-secret>`
+      `Using an ephemeral per-process secret.\n` +
+      `  - Tokens will expire on container restart\n` +
+      `  - Horizontal scaling (k8s) will NOT work\n` +
+      `  - Generate a secret: openssl rand -base64 32\n` +
+      `  - Set environment variable: CSRF_SECRET=<generated-secret>`
   );
   return cachedCsrfSecret;
 };
@@ -595,9 +619,7 @@ const base64UrlDecode = (input: string): Buffer => {
 };
 
 type CsrfTokenPayload = {
-  /** Issued-at timestamp (ms since epoch) */
   ts: number;
-  /** Random nonce (base64url) */
   nonce: string;
 };
 
@@ -607,10 +629,6 @@ const signCsrfToken = (clientId: string, payload: CsrfTokenPayload): Buffer => {
   return crypto.createHmac("sha256", secret).update(data, "utf8").digest();
 };
 
-/**
- * Create a new CSRF token for a client
- * Returns the token to be sent to the client
- */
 export const createCsrfToken = (clientId: string): string => {
   const payload: CsrfTokenPayload = {
     ts: Date.now(),
@@ -624,10 +642,6 @@ export const createCsrfToken = (clientId: string): string => {
   return `${payloadB64}.${sigB64}`;
 };
 
-/**
- * Validate a CSRF token for a client
- * Uses timing-safe comparison to prevent timing attacks
- */
 export const validateCsrfToken = (clientId: string, token: string): boolean => {
   if (!token || typeof token !== "string") {
     return false;
@@ -655,9 +669,7 @@ export const validateCsrfToken = (clientId: string, token: string): boolean => {
     }
 
     const now = Date.now();
-    // Expiry check
     if (now - payload.ts > CSRF_TOKEN_EXPIRY_MS) return false;
-    // Future skew check (clock mismatch)
     if (payload.ts - now > CSRF_TOKEN_FUTURE_SKEW_MS) return false;
 
     const expectedSig = signCsrfToken(clientId, {
@@ -674,13 +686,7 @@ export const validateCsrfToken = (clientId: string, token: string): boolean => {
   }
 };
 
-/**
- * Revoke a CSRF token (e.g., on logout or token refresh)
- */
 export const revokeCsrfToken = (clientId: string): void => {
-  // Stateless CSRF tokens cannot be selectively revoked without shared state.
-  // If revocation is required, implement token blacklisting in a shared store
-  // (e.g., Redis) or rotate CSRF_SECRET.
   void clientId;
 };
 

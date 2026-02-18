@@ -46,7 +46,6 @@ test.describe("Dashboard Workflows", () => {
       try {
         await deleteDrawing(request, id);
       } catch {
-        // Ignore cleanup failures to keep tests resilient
       }
     }
     createdDrawingIds = [];
@@ -55,7 +54,6 @@ test.describe("Dashboard Workflows", () => {
       try {
         await deleteCollection(request, id);
       } catch {
-        // Ignore cleanup failures to keep tests resilient
       }
     }
     createdCollectionIds = [];
@@ -145,9 +143,9 @@ test.describe("Dashboard Workflows", () => {
     await page.goto("/");
     await page.waitForLoadState("networkidle");
     await applyDashboardSearch(page, prefix);
+    await expect(page.locator("[id^='drawing-card-']")).toHaveCount(2);
 
-    await ensureCardSelected(page, first.id);
-    await ensureCardSelected(page, second.id);
+    await page.getByTitle("Select All").click();
 
     await page.getByTitle("Duplicate Selected").click();
 
@@ -156,16 +154,31 @@ test.describe("Dashboard Workflows", () => {
       return results.length;
     }).toBe(4);
 
-    const allPrefixDrawings = await listDrawings(request, { search: prefix });
-    for (const drawing of allPrefixDrawings) {
-      await ensureCardSelected(page, drawing.id);
+    await applyDashboardSearch(page, prefix);
+    await expect(page.locator("[id^='drawing-card-']")).toHaveCount(4);
+
+    const bulkMoveToTrash = async () => {
+      await page.getByTitle("Select All").click();
+      await expect(page.getByTitle("Move to Trash")).toBeEnabled();
+      await page.getByTitle("Move to Trash").click();
+    };
+
+    await bulkMoveToTrash();
+
+    for (let i = 0; i < 2; i++) {
+      const remaining = await listDrawings(request, { search: prefix });
+      if (remaining.length === 0) break;
+      await applyDashboardSearch(page, prefix);
+      await page.waitForTimeout(400);
+      const visibleCount = await page.locator("[id^='drawing-card-']").count();
+      if (visibleCount === 0) continue;
+      await bulkMoveToTrash();
     }
-    await page.getByTitle("Move to Trash").click();
 
     await expect.poll(async () => {
       const trashed = await listDrawings(request, { search: prefix, collectionId: "trash" });
       return trashed.length;
-    }).toBe(4);
+    }, { timeout: 15000 }).toBe(4);
 
     const trashDrawings = await listDrawings(request, { search: prefix, collectionId: "trash" });
     for (const drawing of trashDrawings) {

@@ -3,7 +3,6 @@
 @tailwind utilities;
 
 html.dark body {
-  /* Debug: If this turns red/dark, the class is present */
   background-color: #0a0a0a !important;
 }
 
@@ -22,6 +21,17 @@ body {
 
 html.dark body {
   background-image: radial-gradient(#262626 1px, transparent 1px);
+}
+
+.no-scrollbar {
+  /* Hide scrollbars but keep scrolling (Chrome/Safari/Firefox). */
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE/Edge Legacy */
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  width: 0;
+  height: 0;
 }
 
 @font-face {

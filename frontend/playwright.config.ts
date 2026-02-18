@@ -8,7 +8,7 @@ export default defineConfig({
   workers: process.env.CI ? 1 : undefined,
   reporter: "html",
   use: {
-    baseURL: "http://localhost:5173",
+    baseURL: "http://localhost:6767",
     trace: "on-first-retry",
     screenshot: "only-on-failure",
   },
@@ -18,8 +18,6 @@ export default defineConfig({
       use: { ...devices["Desktop Chrome"] },
     },
   ],
-  // Note: In CI, webServer will start both backend and frontend
-  // Locally, you may need to start them manually or use npm run dev
   webServer: process.env.CI ? [
     {
       command: "cd ../backend && DATABASE_URL=file:./dev.db npm run dev",
@@ -29,7 +27,7 @@ export default defineConfig({
     },
     {
       command: "npm run dev",
-      url: "http://localhost:5173",
+      url: "http://localhost:6767",
       reuseExistingServer: false,
       timeout: 120000,
     },

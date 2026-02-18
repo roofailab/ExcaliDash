@@ -1,6 +1,5 @@
 import express from "express";
 import cors from "cors";
-import dotenv from "dotenv";
 import path from "path";
 import fs from "fs";
 import { promises as fsPromises } from "fs";
@@ -8,8 +7,10 @@ import { createServer } from "http";
 import { Server } from "socket.io";
 import { Worker } from "worker_threads";
 import multer from "multer";
-import archiver from "archiver";
 import { z } from "zod";
+import helmet from "helmet";
+import rateLimit from "express-rate-limit";
+import { v4 as uuidv4 } from "uuid";
 import { PrismaClient, Prisma } from "./generated/client";
 import {
   sanitizeDrawingData,
@@ -18,58 +19,23 @@ import {
   sanitizeSvg,
   elementSchema,
   appStateSchema,
-  createCsrfToken,
-  validateCsrfToken,
-  getCsrfTokenHeader,
-  getOriginFromReferer,
 } from "./security";
-
-dotenv.config();
+import { config } from "./config";
+import { authModeService, requireAuth, optionalAuth } from "./middleware/auth";
+import { errorHandler, asyncHandler } from "./middleware/errorHandler";
+import authRouter from "./auth";
+import { logAuditEvent } from "./utils/audit";
+import { registerDashboardRoutes } from "./routes/dashboard";
+import { registerImportExportRoutes } from "./routes/importExport";
+import { registerSystemRoutes } from "./routes/system";
+import { prisma } from "./db/prisma";
+import { createDrawingsCacheStore } from "./server/drawingsCache";
+import { registerCsrfProtection } from "./server/csrf";
+import { registerSocketHandlers } from "./server/socket";
+import { issueBootstrapSetupCodeIfRequired } from "./auth/bootstrapSetupCode";
 
 const backendRoot = path.resolve(__dirname, "../");
-const defaultDbPath = path.resolve(backendRoot, "prisma/dev.db");
-const resolveDatabaseUrl = (rawUrl?: string) => {
-  if (!rawUrl || rawUrl.trim().length === 0) {
-    return `file:${defaultDbPath}`;
-  }
-
-  if (!rawUrl.startsWith("file:")) {
-    return rawUrl;
-  }
-
-  const filePath = rawUrl.replace(/^file:/, "");
-
-  // Prisma treats relative SQLite paths as relative to the schema directory
-  // (i.e. `backend/prisma/schema.prisma`). Historically this project used
-  // `file:./prisma/dev.db`, which Prisma interprets as `prisma/prisma/dev.db`.
-  // To keep runtime and migrations aligned:
-  // - Prefer resolving relative paths against `backend/prisma`
-  // - But if the path already includes a leading `prisma/`, resolve from repo root
-  const prismaDir = path.resolve(backendRoot, "prisma");
-  const normalizedRelative = filePath.replace(/^\.\/?/, "");
-  const hasLeadingPrismaDir =
-    normalizedRelative === "prisma" ||
-    normalizedRelative.startsWith("prisma/");
-
-  const absolutePath = path.isAbsolute(filePath)
-    ? filePath
-    : path.resolve(hasLeadingPrismaDir ? backendRoot : prismaDir, normalizedRelative);
-
-  return `file:${absolutePath}`;
-};
-
-process.env.DATABASE_URL = resolveDatabaseUrl(process.env.DATABASE_URL);
 console.log("Resolved DATABASE_URL:", process.env.DATABASE_URL);
-
-// Helper to get the resolved database file path
-const getResolvedDbPath = (): string => {
-  const dbUrl = process.env.DATABASE_URL || `file:${defaultDbPath}`;
-  if (dbUrl.startsWith("file:")) {
-    return dbUrl.replace(/^file:/, "");
-  }
-  // Fallback to default for non-file URLs (e.g., Postgres)
-  return defaultDbPath;
-};
 
 const normalizeOrigins = (rawOrigins?: string | null): string[] => {
   const fallback = "http://localhost:6767";
@@ -93,31 +59,45 @@ const normalizeOrigins = (rawOrigins?: string | null): string[] => {
   return parsed.length > 0 ? parsed : [fallback];
 };
 
-const allowedOrigins = normalizeOrigins(process.env.FRONTEND_URL);
+const allowedOrigins = normalizeOrigins(config.frontendUrl);
 console.log("Allowed origins:", allowedOrigins);
 
+const isDev = (process.env.NODE_ENV || "development") !== "production";
+const isLocalDevOrigin = (origin: string): boolean => {
+  return (
+    /^http:\/\/localhost:\d+$/i.test(origin) ||
+    /^http:\/\/127\.0\.0\.1:\d+$/i.test(origin)
+  );
+};
+
+const isAllowedOrigin = (origin?: string): boolean => {
+  if (!origin) return true; // non-browser clients / same-origin
+  if (allowedOrigins.includes(origin)) return true;
+  if (isDev && isLocalDevOrigin(origin)) return true;
+  return false;
+};
+
 const uploadDir = path.resolve(__dirname, "../uploads");
+const MAX_UPLOAD_SIZE_BYTES = 100 * 1024 * 1024;
+const MAX_PAGE_SIZE = 200;
+const MAX_IMPORT_ARCHIVE_ENTRIES = 6000;
+const MAX_IMPORT_COLLECTIONS = 1000;
+const MAX_IMPORT_DRAWINGS = 5000;
+const MAX_IMPORT_MANIFEST_BYTES = 2 * 1024 * 1024;
+const MAX_IMPORT_DRAWING_BYTES = 5 * 1024 * 1024;
+const MAX_IMPORT_TOTAL_EXTRACTED_BYTES = 120 * 1024 * 1024;
 
-const moveFile = async (source: string, destination: string) => {
+let cachedBackendVersion: string | null = null;
+const getBackendVersion = (): string => {
+  if (cachedBackendVersion) return cachedBackendVersion;
   try {
-    await fsPromises.rename(source, destination);
-  } catch (error) {
-    const err = error as NodeJS.ErrnoException;
-    if (!err || err.code !== "EXDEV") {
-      throw error;
-    }
-
-    await fsPromises
-      .unlink(destination)
-      .catch((unlinkError: NodeJS.ErrnoException) => {
-        if (unlinkError && unlinkError.code !== "ENOENT") {
-          throw unlinkError;
-        }
-      });
-
-    await fsPromises.copyFile(source, destination);
-    await fsPromises.unlink(source);
+    const raw = fs.readFileSync(path.resolve(backendRoot, "package.json"), "utf8");
+    const parsed = JSON.parse(raw) as { version?: string };
+    cachedBackendVersion = typeof parsed.version === "string" ? parsed.version : "unknown";
+  } catch {
+    cachedBackendVersion = "unknown";
   }
+  return cachedBackendVersion;
 };
 
 const initializeUploadDir = async () => {
@@ -130,16 +110,16 @@ const initializeUploadDir = async () => {
 
 const app = express();
 
-// Trust proxy headers (X-Forwarded-For, X-Real-IP) from nginx
-// Required for correct client IP detection when running behind a reverse proxy
-// Fix for issue #38: Use 'true' to handle multiple proxy layers (e.g., Traefik, Synology NAS)
-// This ensures Express extracts the real client IP from the leftmost X-Forwarded-For value
-const trustProxyConfig = process.env.TRUST_PROXY || "true";
-const trustProxyValue = trustProxyConfig === "true"
-  ? true
-  : trustProxyConfig === "false"
-  ? false
-  : parseInt(trustProxyConfig, 10) || 1;
+const trustProxyConfig = (process.env.TRUST_PROXY ?? "false").trim();
+const parsedProxyHops = Number.parseInt(trustProxyConfig, 10);
+const trustProxyValue =
+  trustProxyConfig === "true"
+    ? true
+    : trustProxyConfig === "false"
+    ? false
+    : Number.isFinite(parsedProxyHops) && parsedProxyHops > 0
+    ? parsedProxyHops
+    : false;
 app.set("trust proxy", trustProxyValue);
 
 if (trustProxyValue === true) {
@@ -151,12 +131,11 @@ if (trustProxyValue === true) {
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
   cors: {
-    origin: allowedOrigins,
+    origin: (origin, cb) => cb(null, isAllowedOrigin(origin ?? undefined)),
     credentials: true,
   },
-  maxHttpBufferSize: 1e8,
+  maxHttpBufferSize: 50 * 1024 * 1024,
 });
-const prisma = new PrismaClient();
 const parseJsonField = <T>(
   rawValue: string | null | undefined,
   fallback: T
@@ -180,58 +159,46 @@ const DRAWINGS_CACHE_TTL_MS = (() => {
   }
   return parsed;
 })();
-type DrawingsCacheEntry = { body: Buffer; expiresAt: number };
-const drawingsCache = new Map<string, DrawingsCacheEntry>();
+const {
+  buildDrawingsCacheKey,
+  getCachedDrawingsBody,
+  cacheDrawingsResponse,
+  invalidateDrawingsCache,
+} = createDrawingsCacheStore(DRAWINGS_CACHE_TTL_MS);
 
-const buildDrawingsCacheKey = (keyParts: {
-  searchTerm: string;
-  collectionFilter: string;
-  includeData: boolean;
-}) =>
-  JSON.stringify([
-    keyParts.searchTerm,
-    keyParts.collectionFilter,
-    keyParts.includeData ? "full" : "summary",
-  ]);
+const getUserTrashCollectionId = (userId: string): string => `trash:${userId}`;
 
-const getCachedDrawingsBody = (key: string): Buffer | null => {
-  const entry = drawingsCache.get(key);
-  if (!entry) return null;
-  if (Date.now() > entry.expiresAt) {
-    drawingsCache.delete(key);
-    return null;
-  }
-  return entry.body;
-};
-
-const cacheDrawingsResponse = (key: string, payload: any): Buffer => {
-  const body = Buffer.from(JSON.stringify(payload));
-  drawingsCache.set(key, {
-    body,
-    expiresAt: Date.now() + DRAWINGS_CACHE_TTL_MS,
+const ensureTrashCollection = async (
+  db: Prisma.TransactionClient | PrismaClient,
+  userId: string
+): Promise<void> => {
+  const trashCollectionId = getUserTrashCollectionId(userId);
+  const trashCollection = await db.collection.findFirst({
+    where: { id: trashCollectionId, userId },
   });
-  return body;
-};
 
-const invalidateDrawingsCache = () => {
-  drawingsCache.clear();
-};
-
-setInterval(() => {
-  const now = Date.now();
-  for (const [key, entry] of drawingsCache.entries()) {
-    if (now > entry.expiresAt) {
-      drawingsCache.delete(key);
-    }
+  if (!trashCollection) {
+    await db.collection.create({
+      data: {
+        id: trashCollectionId,
+        name: "Trash",
+        userId,
+      },
+    });
   }
-}, 60_000).unref();
 
-const PORT = process.env.PORT || 8000;
+  await db.drawing.updateMany({
+    where: { userId, collectionId: "trash" },
+    data: { collectionId: trashCollectionId },
+  });
+};
+
+const PORT = config.port;
 
 const upload = multer({
   dest: uploadDir,
   limits: {
-    fileSize: 100 * 1024 * 1024,
+    fileSize: MAX_UPLOAD_SIZE_BYTES,
     files: 1,
   },
   fileFilter: (req, file, cb) => {
@@ -247,236 +214,149 @@ const upload = multer({
   },
 });
 
+app.use((req, res, next) => {
+  const requestId = uuidv4();
+  req.headers["x-request-id"] = requestId;
+  res.setHeader("X-Request-ID", requestId);
+  next();
+});
+
+const shouldEnforceHttps =
+  config.nodeEnv === "production" &&
+  allowedOrigins.some((origin) => origin.toLowerCase().startsWith("https://"));
+
+if (shouldEnforceHttps) {
+  const httpsOrigins = allowedOrigins.filter((origin) =>
+    origin.toLowerCase().startsWith("https://")
+  );
+  const canonicalHttpsOrigin = httpsOrigins[0] || allowedOrigins[0] || null;
+  const allowedOriginHosts = new Set(
+    allowedOrigins
+      .map((origin) => {
+        try {
+          return new URL(origin).host.toLowerCase();
+        } catch {
+          return null;
+        }
+      })
+      .filter((host): host is string => Boolean(host))
+  );
+
+  app.use((req, res, next) => {
+    if (req.header("x-forwarded-proto") !== "https") {
+      // Avoid Host-header based open redirects; prefer a configured canonical origin/host.
+      const rawHost = String(req.header("host") || "").trim().toLowerCase();
+      const safeHost = allowedOriginHosts.has(rawHost) ? rawHost : null;
+      const fallbackHost = (() => {
+        if (!canonicalHttpsOrigin) return null;
+        try {
+          return new URL(canonicalHttpsOrigin).host;
+        } catch {
+          return null;
+        }
+      })();
+
+      const targetHost = safeHost || fallbackHost;
+      if (!targetHost) {
+        return res.status(400).send("Invalid host");
+      }
+
+      const path = (req.originalUrl || req.url || "/").startsWith("/")
+        ? (req.originalUrl || req.url || "/")
+        : "/";
+      res.redirect(`https://${targetHost}${path}`);
+    } else {
+      next();
+    }
+  });
+}
+
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      directives: {
+        // Backend serves JSON APIs; keep CSP strict and avoid 'unsafe-*'.
+        defaultSrc: ["'none'"],
+        baseUri: ["'none'"],
+        formAction: ["'none'"],
+        frameAncestors: ["'none'"],
+        objectSrc: ["'none'"],
+        imgSrc: ["'self'", "data:"],
+        connectSrc: ["'self'"],
+      },
+    },
+    hsts: {
+      maxAge: 31536000, // 1 year
+      includeSubDomains: true,
+      preload: true,
+    },
+  })
+);
+
 app.use(
   cors({
-    origin: allowedOrigins,
+    origin: (origin, cb) => cb(null, isAllowedOrigin(origin ?? undefined)),
     credentials: true,
-    allowedHeaders: ["Content-Type", "Authorization", "x-csrf-token"],
-    exposedHeaders: ["x-csrf-token"],
+    allowedHeaders: ["Content-Type", "Authorization", "x-csrf-token", "x-imported-file"],
+    exposedHeaders: ["x-csrf-token", "x-request-id"],
   })
 );
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 
 app.use((req, res, next) => {
+  const requestId = req.headers["x-request-id"] || "unknown";
   const contentLength = req.headers["content-length"];
+  const userEmail = req.user?.email || "anonymous";
+  
   if (contentLength) {
     const sizeInMB = parseInt(contentLength, 10) / 1024 / 1024;
     if (sizeInMB > 10) {
       console.log(
         `[LARGE REQUEST] ${req.method} ${req.path} - ${sizeInMB.toFixed(
           2
-        )}MB - Content-Length: ${contentLength} bytes`
+        )}MB - User: ${userEmail} - RequestID: ${requestId}`
       );
     }
   }
+  
+  console.log(
+    `[REQUEST] ${req.method} ${req.path} - User: ${userEmail} - IP: ${req.ip} - RequestID: ${requestId}`
+  );
+  
   next();
 });
 
-app.use((req, res, next) => {
-  res.setHeader("X-Content-Type-Options", "nosniff");
-  res.setHeader("X-Frame-Options", "DENY");
-  res.setHeader("X-XSS-Protection", "1; mode=block");
-  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
-  res.setHeader(
-    "Permissions-Policy",
-    "geolocation=(), microphone=(), camera=()"
-  );
-
-  res.setHeader(
-    "Content-Security-Policy",
-    "default-src 'self'; " +
-    "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://unpkg.com; " +
-    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
-    "font-src 'self' https://fonts.gstatic.com; " +
-    "img-src 'self' data: blob: https:; " +
-    "connect-src 'self' ws: wss:; " +
-    "frame-ancestors 'none';"
-  );
-
-  next();
-});
-
-const requestCounts = new Map<string, { count: number; resetTime: number }>();
 const RATE_LIMIT_WINDOW = 15 * 60 * 1000;
 
-setInterval(() => {
-  const now = Date.now();
-  for (const [ip, data] of requestCounts.entries()) {
-    if (now > data.resetTime) {
-      requestCounts.delete(ip);
-    }
-  }
-}, 5 * 60 * 1000).unref();
-
-const RATE_LIMIT_MAX_REQUESTS = (() => {
-  const parsed = Number(process.env.RATE_LIMIT_MAX_REQUESTS);
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    return 1000;
-  }
-  return parsed;
-})();
-
-app.use((req, res, next) => {
-  const ip = req.ip || req.connection.remoteAddress || "unknown";
-  const now = Date.now();
-  const clientData = requestCounts.get(ip);
-
-  if (!clientData || now > clientData.resetTime) {
-    requestCounts.set(ip, { count: 1, resetTime: now + RATE_LIMIT_WINDOW });
-    return next();
-  }
-
-  if (clientData.count >= RATE_LIMIT_MAX_REQUESTS) {
-    return res.status(429).json({
-      error: "Rate limit exceeded",
-      message: "Too many requests, please try again later",
-    });
-  }
-
-  clientData.count++;
-  next();
+const generalRateLimiter = rateLimit({
+  windowMs: RATE_LIMIT_WINDOW,
+  max: config.rateLimitMaxRequests,
+  message: {
+    error: "Rate limit exceeded",
+    message: "Too many requests, please try again later",
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  validate: {
+    trustProxy: false,
+    xForwardedForHeader: false,
+  },
 });
 
-// CSRF Protection Middleware
-// Generates a unique client ID based on IP and User-Agent for token association
-const getClientId = (req: express.Request): string => {
-  const ip = req.ip || req.connection.remoteAddress || "unknown";
-  const userAgent = req.headers["user-agent"] || "unknown";
-  const clientId = `${ip}:${userAgent}`.slice(0, 256);
+app.use(generalRateLimiter);
 
-  // Debug logging for CSRF troubleshooting (issue #38)
-  if (process.env.DEBUG_CSRF === "true") {
-    console.log("[CSRF DEBUG] getClientId", {
-      method: req.method,
-      path: req.path,
-      ip,
-      remoteAddress: req.connection.remoteAddress,
-      "x-forwarded-for": req.headers["x-forwarded-for"],
-      "x-real-ip": req.headers["x-real-ip"],
-      userAgent: userAgent.slice(0, 100),
-      clientIdPreview: clientId.slice(0, 60) + "...",
-      trustProxySetting: req.app.get("trust proxy"),
-    });
-  }
-
-  return clientId;
-};
-
-// Rate limiter specifically for CSRF token generation to prevent store exhaustion
-const csrfRateLimit = new Map<string, { count: number; resetTime: number }>();
-const CSRF_RATE_LIMIT_WINDOW = 60 * 1000; // 1 minute
-const CSRF_MAX_REQUESTS = (() => {
-  const parsed = Number(process.env.CSRF_MAX_REQUESTS);
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    return 60; // 1 per second average
-  }
-  return parsed;
-})();
-
-// CSRF token endpoint - clients should call this to get a token
-app.get("/csrf-token", (req, res) => {
-  const ip = req.ip || req.connection.remoteAddress || "unknown";
-  const now = Date.now();
-  const clientLimit = csrfRateLimit.get(ip);
-
-  if (clientLimit && now < clientLimit.resetTime) {
-    if (clientLimit.count >= CSRF_MAX_REQUESTS) {
-      return res.status(429).json({
-        error: "Rate limit exceeded",
-        message: "Too many CSRF token requests",
-      });
-    }
-    clientLimit.count++;
-  } else {
-    csrfRateLimit.set(ip, { count: 1, resetTime: now + CSRF_RATE_LIMIT_WINDOW });
-  }
-
-  // Cleanup old rate limit entries occasionally
-  if (Math.random() < 0.01) {
-    for (const [key, data] of csrfRateLimit.entries()) {
-      if (now > data.resetTime) csrfRateLimit.delete(key);
-    }
-  }
-
-  const clientId = getClientId(req);
-  const token = createCsrfToken(clientId);
-
-  res.json({
-    token,
-    header: getCsrfTokenHeader()
-  });
+registerCsrfProtection({
+  app,
+  isAllowedOrigin,
+  maxRequestsPerWindow: config.csrfMaxRequests,
+  enableDebugLogging: process.env.DEBUG_CSRF === "true",
 });
 
-// CSRF validation middleware for state-changing requests
-const csrfProtectionMiddleware = (
-  req: express.Request,
-  res: express.Response,
-  next: express.NextFunction
-) => {
-  // Skip CSRF validation for safe methods (GET, HEAD, OPTIONS)
-  // Note: /csrf-token is a GET endpoint, so it's automatically exempt
-  const safeMethods = ["GET", "HEAD", "OPTIONS"];
-  if (safeMethods.includes(req.method)) {
-    return next();
-  }
-
-  // Origin/Referer check for defense in depth
-  const origin = req.headers["origin"];
-  const referer = req.headers["referer"];
-
-  // If Origin is present, it must match allowed origins
-  const originValue = Array.isArray(origin) ? origin[0] : origin;
-  const refererValue = Array.isArray(referer) ? referer[0] : referer;
-
-  if (originValue) {
-    if (!allowedOrigins.includes(originValue)) {
-      return res.status(403).json({
-        error: "CSRF origin mismatch",
-        message: "Origin not allowed",
-      });
-    }
-  } else if (refererValue) {
-    // If no Origin but Referer exists, validate its *origin* (avoid prefix bypass)
-    const refererOrigin = getOriginFromReferer(refererValue);
-    if (!refererOrigin || !allowedOrigins.includes(refererOrigin)) {
-      return res.status(403).json({
-        error: "CSRF referer mismatch",
-        message: "Referer not allowed",
-      });
-    }
-  }
-  // Note: If neither Origin nor Referer is present, we proceed to token check.
-  // Some legitimate clients/proxies might strip these, so we don't block strictly on their absence,
-  // but relying on the token is the primary defense.
-
-  const clientId = getClientId(req);
-  const headerName = getCsrfTokenHeader();
-  const tokenHeader = req.headers[headerName];
-  const token = Array.isArray(tokenHeader) ? tokenHeader[0] : tokenHeader;
-
-  if (!token) {
-    return res.status(403).json({
-      error: "CSRF token missing",
-      message: `Missing ${headerName} header`,
-    });
-  }
-
-  if (!validateCsrfToken(clientId, token)) {
-    return res.status(403).json({
-      error: "CSRF token invalid",
-      message: "Invalid or expired CSRF token. Please refresh and try again.",
-    });
-  }
-
-  next();
-};
-
-// Apply CSRF protection to all routes
-app.use(csrfProtectionMiddleware);
+app.use("/auth", authRouter);
 
 const filesFieldSchema = z
-  .union([z.record(z.string(), z.any()), z.null()])
+  .union([z.record(z.string(), z.unknown()), z.null()])
   .optional()
   .transform((value) => (value === null ? undefined : value));
 
@@ -508,51 +388,69 @@ const drawingCreateSchema = drawingBaseSchema
     }
   );
 
-const drawingUpdateSchema = drawingBaseSchema
+const drawingUpdateSchemaBase = drawingBaseSchema
   .extend({
     elements: elementSchema.array().optional(),
     appState: appStateSchema.optional(),
     files: filesFieldSchema,
-  })
-  .refine(
-    (data) => {
-      try {
-        const sanitizedData = { ...data };
-        if (data.elements !== undefined || data.appState !== undefined) {
-          const fullData = {
-            elements: Array.isArray(data.elements) ? data.elements : [],
-            appState:
-              typeof data.appState === "object" && data.appState !== null
-                ? data.appState
-                : {},
-            files: data.files || {},
-            preview: data.preview,
-            name: data.name,
-            collectionId: data.collectionId,
-          };
-          const sanitized = sanitizeDrawingData(fullData);
-          sanitizedData.elements = sanitized.elements;
-          sanitizedData.appState = sanitized.appState;
-          if (data.files !== undefined) sanitizedData.files = sanitized.files;
-          if (data.preview !== undefined)
-            sanitizedData.preview = sanitized.preview;
-          Object.assign(data, sanitizedData);
-        }
-        return true;
-      } catch (error) {
-        console.error("Sanitization failed:", error);
-        if (
-          data.elements === undefined &&
-          data.appState === undefined &&
-          (data.name !== undefined ||
-            data.preview !== undefined ||
-            data.collectionId !== undefined)
-        ) {
-          return true;
-        }
-        return false;
-      }
-    },
+    version: z.number().int().positive().optional(),
+  });
+
+export const sanitizeDrawingUpdateData = (
+  data: {
+    elements?: unknown[];
+    appState?: Record<string, unknown>;
+    files?: Record<string, unknown>;
+    preview?: string | null;
+    name?: string;
+    collectionId?: string | null;
+  }
+): boolean => {
+  const hasSceneFields =
+    data.elements !== undefined ||
+    data.appState !== undefined ||
+    data.files !== undefined;
+  const hasPreviewField = data.preview !== undefined;
+  const needsSanitization = hasSceneFields || hasPreviewField;
+
+  try {
+    const sanitizedData = { ...data };
+    if (hasSceneFields) {
+      const fullData = {
+        elements: Array.isArray(data.elements) ? data.elements : [],
+        appState:
+          typeof data.appState === "object" && data.appState !== null
+            ? data.appState
+            : {},
+        files: data.files || {},
+        preview: data.preview,
+        name: data.name,
+        collectionId: data.collectionId,
+      };
+      const sanitized = sanitizeDrawingData(fullData);
+      if (data.elements !== undefined) sanitizedData.elements = sanitized.elements;
+      if (data.appState !== undefined) sanitizedData.appState = sanitized.appState;
+      if (data.files !== undefined) sanitizedData.files = sanitized.files;
+      if (data.preview !== undefined) sanitizedData.preview = sanitized.preview;
+      Object.assign(data, sanitizedData);
+    } else if (hasPreviewField && typeof data.preview === "string") {
+      data.preview = sanitizeSvg(data.preview);
+      Object.assign(data, { ...data, preview: data.preview });
+    } else if (hasPreviewField && data.preview === null) {
+      Object.assign(data, sanitizedData);
+    }
+    return true;
+  } catch (error) {
+    console.error("Sanitization failed:", error);
+    if (!needsSanitization) {
+      return true;
+    }
+    return false;
+  }
+};
+
+const drawingUpdateSchema = drawingUpdateSchemaBase.refine(
+    (data) => sanitizeDrawingUpdateData(data as any),
     {
       message: "Invalid or malicious drawing data detected",
     }
@@ -562,11 +460,20 @@ const respondWithValidationErrors = (
   res: express.Response,
   issues: z.ZodIssue[]
 ) => {
-  res.status(400).json({
-    error: "Invalid drawing payload",
-    details: issues,
-  });
+  if (config.nodeEnv === "production") {
+    res.status(400).json({
+      error: "Validation error",
+      message: "Invalid request data",
+    });
+  } else {
+    res.status(400).json({
+      error: "Invalid drawing payload",
+      details: issues,
+    });
+  }
 };
+
+const collectionNameSchema = z.string().trim().min(1).max(100);
 
 const validateSqliteHeader = (filePath: string): boolean => {
   try {
@@ -653,655 +560,154 @@ const removeFileIfExists = async (filePath?: string) => {
   }
 };
 
-interface User {
-  id: string;
-  name: string;
-  initials: string;
-  color: string;
-  socketId: string;
-  isActive: boolean;
-}
-
-const roomUsers = new Map<string, User[]>();
-
-io.on("connection", (socket) => {
-  socket.on(
-    "join-room",
-    ({
-      drawingId,
-      user,
-    }: {
-      drawingId: string;
-      user: Omit<User, "socketId" | "isActive">;
-    }) => {
-      const roomId = `drawing_${drawingId}`;
-      socket.join(roomId);
-
-      const newUser: User = { ...user, socketId: socket.id, isActive: true };
-
-      const currentUsers = roomUsers.get(roomId) || [];
-      const filteredUsers = currentUsers.filter((u) => u.id !== user.id);
-      filteredUsers.push(newUser);
-      roomUsers.set(roomId, filteredUsers);
-
-      io.to(roomId).emit("presence-update", filteredUsers);
-    }
-  );
-
-  socket.on("cursor-move", (data) => {
-    const roomId = `drawing_${data.drawingId}`;
-    socket.volatile.to(roomId).emit("cursor-move", data);
-  });
-
-  socket.on("element-update", (data) => {
-    const roomId = `drawing_${data.drawingId}`;
-    socket.to(roomId).emit("element-update", data);
-  });
-
-  socket.on(
-    "user-activity",
-    ({ drawingId, isActive }: { drawingId: string; isActive: boolean }) => {
-      const roomId = `drawing_${drawingId}`;
-      const users = roomUsers.get(roomId);
-      if (users) {
-        const user = users.find((u) => u.socketId === socket.id);
-        if (user) {
-          user.isActive = isActive;
-          io.to(roomId).emit("presence-update", users);
-        }
-      }
-    }
-  );
-
-  socket.on("disconnect", () => {
-    roomUsers.forEach((users, roomId) => {
-      const index = users.findIndex((u) => u.socketId === socket.id);
-      if (index !== -1) {
-        users.splice(index, 1);
-        roomUsers.set(roomId, users);
-        io.to(roomId).emit("presence-update", users);
-      }
-    });
-  });
+registerSocketHandlers({
+  io,
+  prisma,
+  authModeService,
+  jwtSecret: config.jwtSecret,
 });
 
 app.get("/health", (req, res) => {
   res.status(200).json({ status: "ok" });
 });
 
-app.get("/drawings", async (req, res) => {
-  try {
-    const { search, collectionId, includeData } = req.query;
-    const where: any = {};
-    const searchTerm =
-      typeof search === "string" && search.trim().length > 0
-        ? search.trim()
-        : undefined;
 
-    if (searchTerm) {
-      where.name = { contains: searchTerm };
+const enableOnboardingGate =
+  config.authMode === "local" &&
+  config.nodeEnv === "production" &&
+  process.env.DISABLE_ONBOARDING_GATE !== "true";
+
+if (enableOnboardingGate) {
+  const ONBOARDING_GATE_TTL_MS = 5_000;
+  let onboardingGateCache:
+    | { required: boolean; fetchedAt: number }
+    | null = null;
+
+  const isOnboardingGateBypassPath = (reqPath: string): boolean => {
+    if (reqPath === "/health") return true;
+    if (reqPath === "/csrf-token") return true;
+    if (reqPath === "/auth") return true;
+    if (reqPath.startsWith("/auth/")) return true;
+    return false;
+  };
+
+  const isAuthOnboardingRequired = async (): Promise<boolean> => {
+    const now = Date.now();
+    if (onboardingGateCache && now - onboardingGateCache.fetchedAt < ONBOARDING_GATE_TTL_MS) {
+      return onboardingGateCache.required;
     }
 
-    let collectionFilterKey = "default";
-    if (collectionId === "null") {
-      where.collectionId = null;
-      collectionFilterKey = "null";
-    } else if (collectionId) {
-      const normalizedCollectionId = String(collectionId);
-      where.collectionId = normalizedCollectionId;
-      collectionFilterKey = `id:${normalizedCollectionId}`;
-    } else {
-      where.OR = [{ collectionId: { not: "trash" } }, { collectionId: null }];
+    const systemConfig = await authModeService.ensureSystemConfig();
+    if (systemConfig.authEnabled || systemConfig.authOnboardingCompleted) {
+      onboardingGateCache = { required: false, fetchedAt: now };
+      return false;
     }
 
-    const shouldIncludeData =
-      typeof includeData === "string"
-        ? includeData.toLowerCase() === "true" || includeData === "1"
-        : false;
-
-    const cacheKey = buildDrawingsCacheKey({
-      searchTerm: searchTerm ?? "",
-      collectionFilter: collectionFilterKey,
-      includeData: shouldIncludeData,
+    const hasActiveUser = await prisma.user.findFirst({
+      where: { isActive: true },
+      select: { id: true },
     });
 
-    const cachedBody = getCachedDrawingsBody(cacheKey);
-    if (cachedBody) {
-      res.setHeader("X-Cache", "HIT");
-      res.setHeader("Content-Type", "application/json");
-      return res.send(cachedBody);
-    }
+    const required = !hasActiveUser;
+    onboardingGateCache = { required, fetchedAt: now };
+    return required;
+  };
 
-    const summarySelect: Prisma.DrawingSelect = {
-      id: true,
-      name: true,
-      collectionId: true,
-      preview: true,
-      version: true,
-      createdAt: true,
-      updatedAt: true,
-    };
+  app.use(async (req, res, next) => {
+    try {
+      if (isOnboardingGateBypassPath(req.path)) return next();
+      const required = await isAuthOnboardingRequired();
+      if (!required) return next();
 
-    const queryOptions: Prisma.DrawingFindManyArgs = {
-      where,
-      orderBy: { updatedAt: "desc" },
-    };
-
-    if (!shouldIncludeData) {
-      queryOptions.select = summarySelect;
-    }
-
-    const drawings = await prisma.drawing.findMany(queryOptions);
-
-    let responsePayload: any = drawings;
-
-    if (shouldIncludeData) {
-      responsePayload = drawings.map((d: any) => ({
-        ...d,
-        elements: parseJsonField(d.elements, []),
-        appState: parseJsonField(d.appState, {}),
-        files: parseJsonField(d.files, {}),
-      }));
-    }
-
-    const body = cacheDrawingsResponse(cacheKey, responsePayload);
-    res.setHeader("X-Cache", "MISS");
-    res.setHeader("Content-Type", "application/json");
-    return res.send(body);
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: "Failed to fetch drawings" });
-  }
-});
-
-app.get("/drawings/:id", async (req, res) => {
-  try {
-    const { id } = req.params;
-    console.log("[API] Fetching drawing", { id });
-    const drawing = await prisma.drawing.findUnique({ where: { id } });
-
-    if (!drawing) {
-      console.warn("[API] Drawing not found", { id });
-      return res.status(404).json({ error: "Drawing not found" });
-    }
-
-    res.json({
-      ...drawing,
-      elements: JSON.parse(drawing.elements),
-      appState: JSON.parse(drawing.appState),
-      files: JSON.parse(drawing.files || "{}"),
-    });
-  } catch (error) {
-    res.status(500).json({ error: "Failed to fetch drawing" });
-  }
-});
-
-app.post("/drawings", async (req, res) => {
-  try {
-    const isImportedDrawing = req.headers["x-imported-file"] === "true";
-
-    if (isImportedDrawing && !validateImportedDrawing(req.body)) {
-      return res.status(400).json({
-        error: "Invalid imported drawing file",
+      res.setHeader("Clear-Site-Data", "\"cache\"");
+      return res.status(409).json({
+        error: "Authentication onboarding required",
+        code: "AUTH_ONBOARDING_REQUIRED",
         message:
-          "The imported file contains potentially malicious content or invalid structure",
+          "Authentication onboarding is required before using the app. Refresh the page to load the latest UI and complete setup.",
+        redirectTo: "/auth-setup",
       });
-    }
-
-    const parsed = drawingCreateSchema.safeParse(req.body);
-    if (!parsed.success) {
-      return respondWithValidationErrors(res, parsed.error.issues);
-    }
-
-    const payload = parsed.data;
-    const drawingName = payload.name ?? "Untitled Drawing";
-    const targetCollectionId =
-      payload.collectionId === undefined ? null : payload.collectionId;
-
-    const newDrawing = await prisma.drawing.create({
-      data: {
-        name: drawingName,
-        elements: JSON.stringify(payload.elements),
-        appState: JSON.stringify(payload.appState),
-        collectionId: targetCollectionId,
-        preview: payload.preview ?? null,
-        files: JSON.stringify(payload.files ?? {}),
-      },
-    });
-    invalidateDrawingsCache();
-
-    res.json({
-      ...newDrawing,
-      elements: JSON.parse(newDrawing.elements),
-      appState: JSON.parse(newDrawing.appState),
-      files: JSON.parse(newDrawing.files || "{}"),
-    });
-  } catch (error) {
-    console.error("Failed to create drawing:", error);
-    res.status(500).json({ error: "Failed to create drawing" });
-  }
-});
-
-app.put("/drawings/:id", async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    const parsed = drawingUpdateSchema.safeParse(req.body);
-    if (!parsed.success) {
-      console.error("[API] Validation failed", {
-        id,
-        errorCount: parsed.error.issues.length,
-        errors: parsed.error.issues.map((issue) => ({
-          path: issue.path,
-          message: issue.message,
-          received:
-            issue.path.length > 0 ? req.body?.[issue.path.join(".")] : "root",
-        })),
-      });
-      return respondWithValidationErrors(res, parsed.error.issues);
-    }
-
-    const payload = parsed.data;
-
-    const data: any = {
-      version: { increment: 1 },
-    };
-
-    if (payload.name !== undefined) data.name = payload.name;
-    if (payload.elements !== undefined)
-      data.elements = JSON.stringify(payload.elements);
-    if (payload.appState !== undefined)
-      data.appState = JSON.stringify(payload.appState);
-    if (payload.files !== undefined) data.files = JSON.stringify(payload.files);
-    if (payload.collectionId !== undefined)
-      data.collectionId = payload.collectionId;
-    if (payload.preview !== undefined) data.preview = payload.preview;
-
-    const updatedDrawing = await prisma.drawing.update({
-      where: { id },
-      data,
-    });
-    invalidateDrawingsCache();
-
-    res.json({
-      ...updatedDrawing,
-      elements: JSON.parse(updatedDrawing.elements),
-      appState: JSON.parse(updatedDrawing.appState),
-      files: JSON.parse(updatedDrawing.files || "{}"),
-    });
-  } catch (error) {
-    console.error("[CRITICAL] Update failed:", error);
-    res.status(500).json({ error: "Failed to update drawing" });
-  }
-});
-
-app.delete("/drawings/:id", async (req, res) => {
-  try {
-    const { id } = req.params;
-    await prisma.drawing.delete({ where: { id } });
-    invalidateDrawingsCache();
-    res.json({ success: true });
-  } catch (error) {
-    res.status(500).json({ error: "Failed to delete drawing" });
-  }
-});
-
-app.post("/drawings/:id/duplicate", async (req, res) => {
-  try {
-    const { id } = req.params;
-    const original = await prisma.drawing.findUnique({ where: { id } });
-
-    if (!original) {
-      return res.status(404).json({ error: "Original drawing not found" });
-    }
-
-    const newDrawing = await prisma.drawing.create({
-      data: {
-        name: `${original.name} (Copy)`,
-        elements: original.elements,
-        appState: original.appState,
-        files: original.files,
-        collectionId: original.collectionId,
-        version: 1,
-      },
-    });
-    invalidateDrawingsCache();
-
-    res.json({
-      ...newDrawing,
-      elements: JSON.parse(newDrawing.elements),
-      appState: JSON.parse(newDrawing.appState),
-      files: JSON.parse(newDrawing.files || "{}"),
-    });
-  } catch (error) {
-    res.status(500).json({ error: "Failed to duplicate drawing" });
-  }
-});
-
-app.get("/collections", async (req, res) => {
-  try {
-    const collections = await prisma.collection.findMany({
-      orderBy: { createdAt: "desc" },
-    });
-    res.json(collections);
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: "Failed to fetch collections" });
-  }
-});
-
-app.post("/collections", async (req, res) => {
-  try {
-    const { name } = req.body;
-    const newCollection = await prisma.collection.create({
-      data: { name },
-    });
-    res.json(newCollection);
-  } catch (error) {
-    res.status(500).json({ error: "Failed to create collection" });
-  }
-});
-
-app.put("/collections/:id", async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { name } = req.body;
-    const updatedCollection = await prisma.collection.update({
-      where: { id },
-      data: { name },
-    });
-    res.json(updatedCollection);
-  } catch (error) {
-    res.status(500).json({ error: "Failed to update collection" });
-  }
-});
-
-app.delete("/collections/:id", async (req, res) => {
-  try {
-    const { id } = req.params;
-    await prisma.$transaction([
-      prisma.drawing.updateMany({
-        where: { collectionId: id },
-        data: { collectionId: null },
-      }),
-      prisma.collection.delete({
-        where: { id },
-      }),
-    ]);
-    invalidateDrawingsCache();
-
-    res.json({ success: true });
-  } catch (error) {
-    res.status(500).json({ error: "Failed to delete collection" });
-  }
-});
-
-app.get("/library", async (req, res) => {
-  try {
-    const library = await prisma.library.findUnique({
-      where: { id: "default" },
-    });
-
-    if (!library) {
-      return res.json({ items: [] });
-    }
-
-    res.json({
-      items: JSON.parse(library.items),
-    });
-  } catch (error) {
-    console.error("Failed to fetch library:", error);
-    res.status(500).json({ error: "Failed to fetch library" });
-  }
-});
-
-app.put("/library", async (req, res) => {
-  try {
-    const { items } = req.body;
-
-    if (!Array.isArray(items)) {
-      return res.status(400).json({ error: "Items must be an array" });
-    }
-
-    const library = await prisma.library.upsert({
-      where: { id: "default" },
-      update: {
-        items: JSON.stringify(items),
-      },
-      create: {
-        id: "default",
-        items: JSON.stringify(items),
-      },
-    });
-
-    res.json({
-      items: JSON.parse(library.items),
-    });
-  } catch (error) {
-    console.error("Failed to update library:", error);
-    res.status(500).json({ error: "Failed to update library" });
-  }
-});
-
-app.get("/export", async (req, res) => {
-  try {
-    const formatParam =
-      typeof req.query.format === "string"
-        ? req.query.format.toLowerCase()
-        : undefined;
-    const extension = formatParam === "db" ? "db" : "sqlite";
-    const dbPath = getResolvedDbPath();
-
-    try {
-      await fsPromises.access(dbPath);
-    } catch {
-      return res.status(404).json({ error: "Database file not found" });
-    }
-
-    res.setHeader("Content-Type", "application/octet-stream");
-    res.setHeader(
-      "Content-Disposition",
-      `attachment; filename="excalidash-db-${new Date().toISOString().split("T")[0]
-      }.${extension}"`
-    );
-
-    const fileStream = fs.createReadStream(dbPath);
-    fileStream.pipe(res);
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: "Failed to export database" });
-  }
-});
-
-app.get("/export/json", async (req, res) => {
-  try {
-    const drawings = await prisma.drawing.findMany({
-      include: {
-        collection: true,
-      },
-    });
-
-    res.setHeader("Content-Type", "application/zip");
-    res.setHeader(
-      "Content-Disposition",
-      `attachment; filename="excalidraw-drawings-${new Date().toISOString().split("T")[0]
-      }.zip"`
-    );
-
-    const archive = archiver("zip", { zlib: { level: 9 } });
-
-    archive.on("error", (err) => {
-      console.error("Archive error:", err);
-      res.status(500).json({ error: "Failed to create archive" });
-    });
-
-    archive.pipe(res);
-
-    const drawingsByCollection: { [key: string]: any[] } = {};
-
-    drawings.forEach((drawing: any) => {
-      const collectionName = drawing.collection?.name || "Unorganized";
-      if (!drawingsByCollection[collectionName]) {
-        drawingsByCollection[collectionName] = [];
-      }
-
-      const drawingData = {
-        elements: JSON.parse(drawing.elements),
-        appState: JSON.parse(drawing.appState),
-        files: JSON.parse(drawing.files || "{}"),
-      };
-
-      drawingsByCollection[collectionName].push({
-        name: drawing.name,
-        data: drawingData,
-      });
-    });
-
-    Object.entries(drawingsByCollection).forEach(
-      ([collectionName, collectionDrawings]) => {
-        const folderName = collectionName.replace(/[<>:"/\\|?*]/g, "_");
-        collectionDrawings.forEach((drawing, index) => {
-          const fileName = `${drawing.name.replace(
-            /[<>:"/\\|?*]/g,
-            "_"
-          )}.excalidraw`;
-          const filePath = `${folderName}/${fileName}`;
-
-          archive.append(JSON.stringify(drawing.data, null, 2), {
-            name: filePath,
-          });
-        });
-      }
-    );
-
-    const readmeContent = `ExcaliDash Export
-
-This archive contains your ExcaliDash drawings organized by collection folders.
-
-Structure:
-- Each collection has its own folder
-- Each drawing is saved as a .excalidraw file
-- Files can be imported back into ExcaliDash
-
-Export Date: ${new Date().toISOString()}
-Total Collections: ${Object.keys(drawingsByCollection).length}
-Total Drawings: ${drawings.length}
-
-Collections:
-${Object.entries(drawingsByCollection)
-        .map(([name, drawings]) => `- ${name}: ${drawings.length} drawings`)
-        .join("\n")}
-`;
-
-    archive.append(readmeContent, { name: "README.txt" });
-
-    await archive.finalize();
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: "Failed to export drawings" });
-  }
-});
-
-app.post("/import/sqlite/verify", upload.single("db"), async (req, res) => {
-  try {
-    if (!req.file) {
-      return res.status(400).json({ error: "No file uploaded" });
-    }
-
-    const stagedPath = req.file.path;
-    const isValid = await verifyDatabaseIntegrityAsync(stagedPath);
-    await removeFileIfExists(stagedPath);
-
-    if (!isValid) {
-      return res.status(400).json({ error: "Invalid database format" });
-    }
-
-    res.json({ valid: true, message: "Database file is valid" });
-  } catch (error) {
-    console.error(error);
-    if (req.file) {
-      await removeFileIfExists(req.file.path);
-    }
-    res.status(500).json({ error: "Failed to verify database file" });
-  }
-});
-
-app.post("/import/sqlite", upload.single("db"), async (req, res) => {
-  try {
-    if (!req.file) {
-      return res.status(400).json({ error: "No file uploaded" });
-    }
-
-    const originalPath = req.file.path;
-    const stagedPath = path.join(
-      uploadDir,
-      `temp-${Date.now()}-${Math.random().toString(36).slice(2)}.db`
-    );
-
-    try {
-      await moveFile(originalPath, stagedPath);
     } catch (error) {
-      console.error("Failed to stage uploaded database", error);
-      await removeFileIfExists(originalPath);
-      await removeFileIfExists(stagedPath);
-      return res.status(500).json({ error: "Failed to stage uploaded file" });
+      console.error("Auth onboarding gate error:", error);
+      return next();
     }
+  });
+}
 
-    const isValid = await verifyDatabaseIntegrityAsync(stagedPath);
-    if (!isValid) {
-      await removeFileIfExists(stagedPath);
-      return res
-        .status(400)
-        .json({ error: "Uploaded database failed integrity check" });
-    }
+registerSystemRoutes(app, {
+  asyncHandler,
+  getBackendVersion,
+});
 
-    const dbPath = getResolvedDbPath();
-    const backupPath = `${dbPath}.backup`;
+registerDashboardRoutes(app, {
+  prisma,
+  requireAuth,
+  optionalAuth,
+  asyncHandler,
+  parseJsonField,
+  sanitizeText,
+  validateImportedDrawing,
+  drawingCreateSchema,
+  drawingUpdateSchema,
+  respondWithValidationErrors,
+  collectionNameSchema,
+  ensureTrashCollection,
+  invalidateDrawingsCache,
+  buildDrawingsCacheKey,
+  getCachedDrawingsBody,
+  cacheDrawingsResponse,
+  MAX_PAGE_SIZE,
+  config,
+  logAuditEvent,
+});
 
+registerImportExportRoutes({
+  app,
+  prisma,
+  requireAuth,
+  asyncHandler,
+  upload,
+  uploadDir,
+  backendRoot,
+  getBackendVersion,
+  parseJsonField,
+  sanitizeText,
+  validateImportedDrawing,
+  ensureTrashCollection,
+  invalidateDrawingsCache,
+  removeFileIfExists,
+  verifyDatabaseIntegrityAsync,
+  MAX_IMPORT_ARCHIVE_ENTRIES,
+  MAX_IMPORT_COLLECTIONS,
+  MAX_IMPORT_DRAWINGS,
+  MAX_IMPORT_MANIFEST_BYTES,
+  MAX_IMPORT_DRAWING_BYTES,
+  MAX_IMPORT_TOTAL_EXTRACTED_BYTES,
+});
+
+app.use(errorHandler);
+
+export { app, httpServer };
+
+const isMain =
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+  typeof require !== "undefined" && require.main === module;
+
+if (isMain) {
+  httpServer.listen(PORT, async () => {
+    await initializeUploadDir();
     try {
-      try {
-        await fsPromises.access(dbPath);
-        await fsPromises.copyFile(dbPath, backupPath);
-      } catch { }
-
-      await moveFile(stagedPath, dbPath);
-    } catch (error) {
-      console.error("Failed to replace database", error);
-      await removeFileIfExists(stagedPath);
-      return res.status(500).json({ error: "Failed to replace database" });
-    }
-
-    await prisma.$disconnect();
-    invalidateDrawingsCache();
-
-    res.json({ success: true, message: "Database imported successfully" });
-  } catch (error) {
-    console.error(error);
-    if (req.file) {
-      await removeFileIfExists(req.file.path);
-    }
-    res.status(500).json({ error: "Failed to import database" });
-  }
-});
-
-const ensureTrashCollection = async () => {
-  try {
-    const trash = await prisma.collection.findUnique({
-      where: { id: "trash" },
-    });
-    if (!trash) {
-      await prisma.collection.create({
-        data: { id: "trash", name: "Trash" },
+      await issueBootstrapSetupCodeIfRequired({
+        prisma,
+        ttlMs: config.bootstrapSetupCodeTtlMs,
+        authMode: config.authMode,
+        reason: "startup",
       });
-      console.log("Created Trash collection");
+    } catch (error) {
+      console.error("Failed to issue bootstrap setup code:", error);
     }
-  } catch (error) {
-    console.error("Failed to ensure Trash collection:", error);
-  }
-};
-
-httpServer.listen(PORT, async () => {
-  await initializeUploadDir();
-  await ensureTrashCollection();
-  console.log(`Server running on port ${PORT}`);
-});
+    console.log(`Server running on port ${PORT}`);
+    console.log(`Environment: ${config.nodeEnv}`);
+    console.log(`Frontend URL: ${config.frontendUrl}`);
+  });
+}

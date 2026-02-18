@@ -1,9 +1,13 @@
+import { getInitialsFromName } from "./user";
+
 export interface UserIdentity {
   id: string;
   name: string;
   initials: string;
   color: string;
 }
+
+const DEVICE_ID_KEY = "excalidash-device-id";
 
 const TRANSFORMERS = [
   { name: "Optimus Prime", initials: "OP" },
@@ -62,29 +66,60 @@ const TRANSFORMERS = [
 ];
 
 const COLORS = [
-  "#ef4444", // red-500
-  "#f97316", // orange-500
-  "#f59e0b", // amber-500
-  "#84cc16", // lime-500
-  "#22c55e", // green-500
-  "#10b981", // emerald-500
-  "#14b8a6", // teal-500
-  "#06b6d4", // cyan-500
-  "#0ea5e9", // sky-500
-  "#3b82f6", // blue-500
-  "#6366f1", // indigo-500
-  "#8b5cf6", // violet-500
-  "#a855f7", // purple-500
-  "#d946ef", // fuchsia-500
-  "#ec4899", // pink-500
-  "#f43f5e", // rose-500
+  "#ef4444",
+  "#f97316",
+  "#f59e0b",
+  "#84cc16",
+  "#22c55e",
+  "#10b981",
+  "#14b8a6",
+  "#06b6d4",
+  "#0ea5e9",
+  "#3b82f6",
+  "#6366f1",
+  "#8b5cf6",
+  "#a855f7",
+  "#d946ef",
+  "#ec4899",
+  "#f43f5e",
 ];
 
+const ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+
+const hashString = (input: string): number => {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < input.length; i += 1) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return hash >>> 0;
+};
+
+const getCryptoObject = (): Crypto | undefined =>
+  typeof globalThis !== "undefined"
+    ? globalThis.crypto || (globalThis as any).msCrypto
+    : undefined;
+
+const getSecureRandomInt = (maxExclusive: number): number => {
+  if (maxExclusive <= 1) return 0;
+  const cryptoObj = getCryptoObject();
+  if (cryptoObj?.getRandomValues) {
+    const buffer = new Uint32Array(1);
+    cryptoObj.getRandomValues(buffer);
+    return buffer[0] % maxExclusive;
+  }
+  const perfNow =
+    typeof globalThis !== "undefined" &&
+    typeof globalThis.performance !== "undefined" &&
+    typeof globalThis.performance.now === "function"
+      ? globalThis.performance.now()
+      : 0;
+  const seed = `${Date.now().toString(16)}:${perfNow.toString(16)}`;
+  return hashString(seed) % maxExclusive;
+};
+
 const generateClientId = (): string => {
-  const cryptoObj: Crypto | undefined =
-    typeof globalThis !== "undefined"
-      ? globalThis.crypto || (globalThis as any).msCrypto
-      : undefined;
+  const cryptoObj = getCryptoObject();
 
   if (cryptoObj?.randomUUID) {
     return cryptoObj.randomUUID();
@@ -101,25 +136,74 @@ const generateClientId = (): string => {
       .join("")}-${hex.slice(8, 10).join("")}-${hex.slice(10).join("")}`;
   }
 
-  // Final fallback for very old browsers; uniqueness window-scoped only.
-  return `id-${Date.now().toString(16)}-${Math.random().toString(16).slice(2)}`;
+  const perfNow =
+    typeof globalThis !== "undefined" &&
+    typeof globalThis.performance !== "undefined" &&
+    typeof globalThis.performance.now === "function"
+      ? globalThis.performance.now()
+      : 0;
+  const entropy = `${Date.now().toString(16)}-${perfNow.toString(16)}-${getSecureRandomInt(1_000_000_000).toString(16)}`;
+  return `id-${hashString(entropy).toString(16)}-${hashString(`${entropy}:2`).toString(16)}`;
+};
+
+export const getOrCreateBrowserFingerprint = (): string => {
+  const existing = localStorage.getItem(DEVICE_ID_KEY);
+  if (existing) return existing;
+  const generated = generateClientId();
+  localStorage.setItem(DEVICE_ID_KEY, generated);
+  return generated;
+};
+
+export const getFingerprintInitials = (seed?: string): string => {
+  const fingerprint = seed || getOrCreateBrowserFingerprint();
+  const hash = hashString(fingerprint);
+  const first = ALPHABET[hash % ALPHABET.length];
+  const second = ALPHABET[Math.floor(hash / ALPHABET.length) % ALPHABET.length];
+  return `${first}${second}`;
 };
 
 export const getUserIdentity = (): UserIdentity => {
   const stored = localStorage.getItem("excalidash-user-id");
   if (stored) {
-    return JSON.parse(stored);
+    try {
+      const parsed = JSON.parse(stored) as Partial<UserIdentity>;
+      if (
+        parsed &&
+        typeof parsed === "object" &&
+        typeof parsed.id === "string" &&
+        typeof parsed.name === "string" &&
+        typeof parsed.color === "string"
+      ) {
+        // Always derive initials from the display name so the badge matches what
+        // the server will compute for presence (and to avoid LO vs Scourge-style mismatches).
+        const normalizedInitials = getInitialsFromName(parsed.name);
+        const normalized: UserIdentity = {
+          id: parsed.id,
+          name: parsed.name,
+          color: parsed.color,
+          initials: normalizedInitials,
+        };
+        localStorage.setItem("excalidash-user-id", JSON.stringify(normalized));
+        return normalized;
+      }
+    } catch {
+      // Ignore parse errors and regenerate a fresh identity below.
+    }
   }
 
-  const randomTransformer =
-    TRANSFORMERS[Math.floor(Math.random() * TRANSFORMERS.length)];
-  const randomColor = COLORS[Math.floor(Math.random() * COLORS.length)];
+  const deviceId = getOrCreateBrowserFingerprint();
+  // Deterministic guest identity derived from the device fingerprint.
+  // This keeps the "guest name" stable and consistent even if excalidash-user-id
+  // is cleared, and ensures initials always match the display name.
+  const hash = hashString(deviceId);
+  const transformer = TRANSFORMERS[hash % TRANSFORMERS.length];
+  const color = COLORS[Math.floor(hash / TRANSFORMERS.length) % COLORS.length];
 
   const identity: UserIdentity = {
-    id: generateClientId(),
-    name: randomTransformer.name,
-    initials: randomTransformer.initials,
-    color: randomColor,
+    id: deviceId,
+    name: transformer.name,
+    initials: getInitialsFromName(transformer.name),
+    color,
   };
 
   localStorage.setItem("excalidash-user-id", JSON.stringify(identity));

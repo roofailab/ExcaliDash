@@ -27,9 +27,7 @@ import {
   getSecurityConfig,
 } from "../security";
 
-// Test directly against the security functions first (unit-level)
 describe("Security Sanitization - Image Data URLs", () => {
-  // Reset security settings before each test
   beforeEach(() => {
     resetSecuritySettings();
   });
@@ -47,10 +45,8 @@ describe("Security Sanitization - Image Data URLs", () => {
     });
 
     it("should reject dataURL exceeding configured limit", () => {
-      // Set a small limit for testing
       configureSecuritySettings({ maxDataUrlSize: 1000 });
       
-      // Create a dataURL larger than 1000 chars
       const largeDataUrl = "data:image/png;base64," + "A".repeat(2000);
       const files = {
         "file-1": {
@@ -68,15 +64,12 @@ describe("Security Sanitization - Image Data URLs", () => {
       });
       
       const resultFiles = result.files as Record<string, any>;
-      // Should be cleared because it exceeds the configured limit
       expect(resultFiles["file-1"].dataURL).toBe("");
     });
 
     it("should allow dataURL under configured limit", () => {
-      // Set limit to 5000 chars
       configureSecuritySettings({ maxDataUrlSize: 5000 });
       
-      // Create a dataURL smaller than 5000 chars
       const smallDataUrl = "data:image/png;base64," + "A".repeat(100);
       const files = {
         "file-1": {
@@ -128,7 +121,6 @@ describe("Security Sanitization - Image Data URLs", () => {
       const files = createSampleFilesObject(1, "large");
       const originalDataUrl = Object.values(files)[0].dataURL;
       
-      // Verify this is actually a large data URL that would trigger the bug
       expect(originalDataUrl.length).toBeGreaterThan(10000);
       
       const result = sanitizeDrawingData({
@@ -140,7 +132,6 @@ describe("Security Sanitization - Image Data URLs", () => {
       const resultFiles = result.files as Record<string, any>;
       const resultDataUrl = Object.values(resultFiles)[0]?.dataURL;
       
-      // THIS IS THE KEY ASSERTION - the old code would truncate to ~10000 chars
       expect(resultDataUrl.length).toBe(originalDataUrl.length);
       expect(resultDataUrl).toBe(originalDataUrl);
     });
@@ -176,7 +167,6 @@ describe("Security Sanitization - Image Data URLs", () => {
       });
       
       const resultFiles = result.files as Record<string, any>;
-      // The dataURL should be cleared or sanitized when it contains script tags
       expect(resultFiles["file-1"].dataURL).not.toContain("<script>");
     });
 
@@ -197,7 +187,6 @@ describe("Security Sanitization - Image Data URLs", () => {
       });
       
       const resultFiles = result.files as Record<string, any>;
-      // javascript: URLs should be blocked
       expect(resultFiles["file-1"].dataURL).not.toContain("javascript:");
     });
 
@@ -238,10 +227,8 @@ describe("Security Sanitization - Image Data URLs", () => {
       });
       
       const resultFiles = result.files as Record<string, any>;
-      // id and mimeType should be sanitized, dataURL should be preserved
       expect(resultFiles["file-1"].id).not.toContain("<script>");
       expect(resultFiles["file-1"].mimeType).not.toContain("<script>");
-      // dataURL should remain intact
       expect(resultFiles["file-1"].dataURL).toBe(files["file-1"].dataURL);
     });
 
@@ -262,8 +249,91 @@ describe("Security Sanitization - Image Data URLs", () => {
       });
       
       const resultFiles = result.files as Record<string, any>;
-      // Should still preserve the data URL even with uppercase
       expect(resultFiles["file-1"].dataURL).toBe(files["file-1"].dataURL);
+    });
+  });
+
+  describe("sanitizeDrawingData - preview svg handling", () => {
+    it("should preserve safe SVG layout attributes needed for thumbnail rendering", () => {
+      const preview = [
+        '<svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 728.39453125 606.908203125" width="1456.7890625" height="1213.81640625" preserveAspectRatio="xMidYMid meet">',
+        '<rect x="0" y="0" width="728.39453125" height="606.908203125" fill="#ffffff"></rect>',
+        '<path d="M0 0 L20 20" stroke="#000" stroke-linecap="round"></path>',
+        "</svg>",
+      ].join("");
+
+      const result = sanitizeDrawingData({
+        elements: [],
+        appState: { viewBackgroundColor: "#ffffff" },
+        files: {},
+        preview,
+      });
+
+      expect(result.preview).toContain('viewBox="0 0 728.39453125 606.908203125"');
+      expect(result.preview).toContain('preserveAspectRatio="xMidYMid meet"');
+      expect(result.preview).toContain('stroke-linecap="round"');
+      expect(result.preview).toContain('xmlns="http://www.w3.org/2000/svg"');
+    });
+
+    it("should preserve safe embedded image previews", () => {
+      const preview = [
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40">',
+        '<image x="0" y="0" width="40" height="40" href="data:image/png;base64,AAAA"></image>',
+        "</svg>",
+      ].join("");
+
+      const result = sanitizeDrawingData({
+        elements: [],
+        appState: { viewBackgroundColor: "#ffffff" },
+        files: {},
+        preview,
+      });
+
+      expect(result.preview).toContain("<image");
+      expect(result.preview).toContain('href="data:image/png;base64,AAAA"');
+    });
+
+    it("should remove embedded images with unsafe href values", () => {
+      const preview = [
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40">',
+        '<image x="0" y="0" width="40" height="40" href="javascript:alert(1)"></image>',
+        '<rect x="0" y="0" width="10" height="10" fill="#000"></rect>',
+        "</svg>",
+      ].join("");
+
+      const result = sanitizeDrawingData({
+        elements: [],
+        appState: { viewBackgroundColor: "#ffffff" },
+        files: {},
+        preview,
+      });
+
+      expect(result.preview).not.toContain("<image");
+      expect(result.preview).toContain("<rect");
+    });
+
+    it("should preserve safe defs/pattern image structures used by Excalidraw exports", () => {
+      const preview = [
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">',
+        '<defs><pattern id="p1" width="1" height="1" patternUnits="objectBoundingBox">',
+        '<image href="data:image/png;base64,AAAA" width="100" height="100"></image>',
+        "</pattern></defs>",
+        '<rect x="0" y="0" width="100" height="100" fill="url(#p1)"></rect>',
+        "</svg>",
+      ].join("");
+
+      const result = sanitizeDrawingData({
+        elements: [],
+        appState: { viewBackgroundColor: "#ffffff" },
+        files: {},
+        preview,
+      });
+
+      expect(result.preview).toContain("<defs>");
+      expect(result.preview).toContain("<pattern");
+      expect(result.preview).toContain('id="p1"');
+      expect(result.preview).toContain("<image");
+      expect(result.preview).toContain('fill="url(#p1)"');
     });
   });
 
@@ -305,20 +375,19 @@ describe("Security Sanitization - Image Data URLs", () => {
         },
       };
       
-      // The validation should still pass, but sanitization should clean the data
       const isValid = validateImportedDrawing(drawing);
       expect(isValid).toBe(true);
     });
   });
 });
 
-// Database integration tests
 describe("Drawing API - Database Round-Trip", () => {
   const prisma = getTestPrisma();
+  let testUser: { id: string };
 
   beforeAll(async () => {
     setupTestDb();
-    await initTestDb(prisma);
+    testUser = await initTestDb(prisma);
   });
 
   afterAll(async () => {
@@ -333,20 +402,18 @@ describe("Drawing API - Database Round-Trip", () => {
     const files = createSampleFilesObject(1, "large");
     const originalDataUrl = Object.values(files)[0].dataURL;
     
-    // Verify the data URL is large enough to trigger the bug
     expect(originalDataUrl.length).toBeGreaterThan(10000);
     
-    // Create drawing with files
     const created = await prisma.drawing.create({
       data: {
         name: "Test with Image",
         elements: JSON.stringify([]),
         appState: JSON.stringify({ viewBackgroundColor: "#ffffff" }),
         files: JSON.stringify(files),
+        userId: testUser.id,
       },
     });
     
-    // Read it back
     const retrieved = await prisma.drawing.findUnique({
       where: { id: created.id },
     });
@@ -356,7 +423,6 @@ describe("Drawing API - Database Round-Trip", () => {
     const parsedFiles = JSON.parse(retrieved!.files || "{}");
     const retrievedDataUrl = Object.values(parsedFiles as Record<string, any>)[0]?.dataURL;
     
-    // THE KEY ASSERTION - data should not be truncated
     expect(retrievedDataUrl.length).toBe(originalDataUrl.length);
     expect(retrievedDataUrl).toBe(originalDataUrl);
   });
@@ -381,6 +447,7 @@ describe("Drawing API - Database Round-Trip", () => {
         elements: JSON.stringify([]),
         appState: JSON.stringify({}),
         files: JSON.stringify(files),
+        userId: testUser.id,
       },
     });
     
@@ -390,24 +457,22 @@ describe("Drawing API - Database Round-Trip", () => {
     
     const parsedFiles = JSON.parse(retrieved!.files || "{}") as Record<string, any>;
     
-    // Both images should be fully preserved
     expect(parsedFiles["small-image"].dataURL).toBe(files["small-image"].dataURL);
     expect(parsedFiles["large-image"].dataURL).toBe(files["large-image"].dataURL);
     expect(parsedFiles["large-image"].dataURL.length).toBe(files["large-image"].dataURL.length);
   });
 
   it("should preserve files through update cycle", async () => {
-    // Create with no files
     const created = await prisma.drawing.create({
       data: {
         name: "Update Test",
         elements: JSON.stringify([]),
         appState: JSON.stringify({}),
         files: JSON.stringify({}),
+        userId: testUser.id,
       },
     });
     
-    // Update with large image
     const files = createSampleFilesObject(1, "large");
     const originalDataUrl = Object.values(files)[0].dataURL;
     
@@ -418,7 +483,6 @@ describe("Drawing API - Database Round-Trip", () => {
       },
     });
     
-    // Read back
     const retrieved = await prisma.drawing.findUnique({
       where: { id: created.id },
     });
@@ -430,19 +494,11 @@ describe("Drawing API - Database Round-Trip", () => {
   });
 });
 
-// Test the specific scenario from issue #17
 describe("Issue #17 Regression Test - Images Not Loading Fully", () => {
   it("should reproduce and verify fix for truncated image data", () => {
-    // This is the exact scenario that caused issue #17:
-    // 1. User uploads an image to a drawing
-    // 2. The image is saved as a base64 data URL in the files object
-    // 3. On save, sanitizeDrawingData() truncates the dataURL to 10000 chars
-    // 4. On reload, the image appears broken/half-loaded
     
-    // Create a realistic image data URL (around 50KB, typical for a small image)
     const largeImageDataUrl = generateLargeImageDataUrl();
     
-    // Verify it would have been affected by the bug
     expect(largeImageDataUrl.length).toBeGreaterThan(10000);
     console.log(`Testing with image data URL of length: ${largeImageDataUrl.length}`);
     
@@ -456,7 +512,6 @@ describe("Issue #17 Regression Test - Images Not Loading Fully", () => {
       },
     };
     
-    // Simulate what happens when saving a drawing
     const sanitizedData = sanitizeDrawingData({
       elements: [
         {
@@ -477,24 +532,19 @@ describe("Issue #17 Regression Test - Images Not Loading Fully", () => {
       preview: null,
     });
     
-    // THE BUG: Old code would have truncated this
-    // THE FIX: New code should preserve the full data URL
     const sanitizedFiles = sanitizedData.files as Record<string, any>;
     const sanitizedDataUrl = sanitizedFiles["user-uploaded-image"]?.dataURL;
     
-    // Assertions that would FAIL with the old buggy code:
     expect(sanitizedDataUrl).toBeDefined();
     expect(sanitizedDataUrl.length).toBe(largeImageDataUrl.length);
     expect(sanitizedDataUrl).toBe(largeImageDataUrl);
     
-    // Verify it's still a valid data URL structure
     expect(sanitizedDataUrl).toMatch(/^data:image\/png;base64,/);
     
     console.log("✓ Issue #17 regression test passed - image data preserved correctly");
   });
 
   it("should handle edge case: exactly 10000 character data URL", () => {
-    // Create a data URL that's exactly at the truncation boundary
     const baseData = "data:image/png;base64,";
     const neededChars = 10000 - baseData.length;
     const paddedBase64 = "A".repeat(neededChars);
@@ -518,7 +568,6 @@ describe("Issue #17 Regression Test - Images Not Loading Fully", () => {
   });
 
   it("should handle edge case: 10001 character data URL (just over limit)", () => {
-    // This would have been the first case to fail with the old code
     const baseData = "data:image/png;base64,";
     const neededChars = 10001 - baseData.length;
     const paddedBase64 = "A".repeat(neededChars);
@@ -538,8 +587,6 @@ describe("Issue #17 Regression Test - Images Not Loading Fully", () => {
     });
     
     const resultFiles = result.files as Record<string, any>;
-    // WITH THE FIX: should still be 10001 characters
-    // WITH THE BUG: would have been truncated to 10000
     expect(resultFiles["over-limit-test"].dataURL.length).toBe(10001);
   });
 });

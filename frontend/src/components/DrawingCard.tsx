@@ -5,8 +5,8 @@ import { PenTool, Trash2, FolderInput, ArrowRight, Check, Clock, Copy, Download,
 import type { DrawingSummary, Collection, Drawing } from '../types';
 import { formatDistanceToNow } from 'date-fns';
 import clsx from 'clsx';
-import { exportToSvg } from "@excalidraw/excalidraw";
 import { exportDrawingToFile } from '../utils/exportUtils';
+import { previewHasEmbeddedImages } from '../utils/previewSvg';
 
 import * as api from '../api';
 
@@ -16,11 +16,37 @@ type HydratedDrawingData = {
   files: Record<string, any>;
 };
 
+const normalizeImageElementsForPreview = (
+  elements: any[] = [],
+  files: Record<string, any> = {}
+): any[] =>
+  elements.map((element) => {
+    if (!element || element.type !== "image" || typeof element.fileId !== "string") {
+      return element;
+    }
+
+    const file = files[element.fileId];
+    const hasImageData =
+      typeof file?.dataURL === "string" &&
+      file.dataURL.startsWith("data:image/") &&
+      file.dataURL.length > 0;
+
+    if (!hasImageData || element.status === "saved") {
+      return element;
+    }
+
+    return {
+      ...element,
+      status: "saved",
+    };
+  });
+
 interface DrawingCardProps {
   drawing: DrawingSummary;
   collections: Collection[];
   isSelected: boolean;
   isTrash?: boolean;
+  isShared?: boolean;
   onToggleSelection: (e: React.MouseEvent) => void;
   onRename: (id: string, name: string) => void;
   onDelete: (id: string) => void;
@@ -41,6 +67,7 @@ export const DrawingCard: React.FC<DrawingCardProps> = ({
   collections,
   isSelected,
   isTrash = false,
+  isShared = false,
   onToggleSelection,
   onRename,
   onDelete,
@@ -60,6 +87,7 @@ export const DrawingCard: React.FC<DrawingCardProps> = ({
   const [isExporting, setIsExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
   const [fullData, setFullData] = useState<HydratedDrawingData | null>(null);
+  const hasEmbeddedImages = previewHasEmbeddedImages(previewSvg);
 
   const fullDataRef = React.useRef(fullData);
   fullDataRef.current = fullData;
@@ -112,8 +140,12 @@ export const DrawingCard: React.FC<DrawingCardProps> = ({
         if (cancelled) return;
         if (!data?.elements || !data?.appState) return;
 
+        const { exportToSvg } = await import("@excalidraw/excalidraw");
+        
+        if (cancelled) return;
+
         const svg = await exportToSvg({
-          elements: data.elements,
+          elements: normalizeImageElementsForPreview(data.elements, data.files || {}),
           appState: {
             ...data.appState,
             exportBackground: true,
@@ -126,8 +158,8 @@ export const DrawingCard: React.FC<DrawingCardProps> = ({
         const previewHtml = svg.outerHTML;
         setPreviewSvg(previewHtml);
 
-        // Save to backend and notify parent
-        api.updateDrawing(drawing.id, { preview: previewHtml }).catch(console.error);
+        // Don't persist previews from the dashboard: it causes background writes during scrolling,
+        // spams 403/404 in shared contexts, and can persist unintended content.
         onPreviewGenerated?.(drawing.id, previewHtml);
       } catch (e) {
         if (!cancelled) {
@@ -159,7 +191,6 @@ export const DrawingCard: React.FC<DrawingCardProps> = ({
     } catch (error) {
       console.error("Failed to export drawing", error);
       setExportError("Failed to export drawing. Please try again.");
-      // Clear error after 3 seconds
       setTimeout(() => setExportError(null), 3000);
     } finally {
       setIsExporting(false);
@@ -167,7 +198,6 @@ export const DrawingCard: React.FC<DrawingCardProps> = ({
   }, [drawing, ensureFullData]);
 
 
-  // Close context menu on click outside
   useEffect(() => {
     const handleClick = () => setContextMenu(null);
     document.addEventListener('click', handleClick);
@@ -194,9 +224,13 @@ export const DrawingCard: React.FC<DrawingCardProps> = ({
       <div
         id={`drawing-card-${drawing.id}`}
         onContextMenu={handleContextMenu}
-        draggable={!isRenaming}
+        draggable={!isRenaming && !isShared}
         onDragStart={(e) => {
           if (isRenaming) {
+            e.preventDefault();
+            return;
+          }
+          if (isShared) {
             e.preventDefault();
             return;
           }
@@ -208,12 +242,9 @@ export const DrawingCard: React.FC<DrawingCardProps> = ({
           "drawing-card group relative flex flex-col bg-white dark:bg-neutral-900 rounded-2xl border-2 transition-all duration-200 ease-out",
           !isTrash && "hover:-translate-y-1 hover:shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] dark:hover:shadow-[4px_4px_0px_0px_rgba(255,255,255,0.2)]",
           isTrash && "shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] dark:shadow-[2px_2px_0px_0px_rgba(255,255,255,0.2)] opacity-80 grayscale-[0.5]",
-          // "always show the border for trash" -> It already has a border. Maybe "always show shadow"?
-          // I added default shadow for trash and reduced opacity to indicate trash state.
           isSelected ? "border-neutral-500 dark:border-neutral-500 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] dark:shadow-[4px_4px_0px_0px_rgba(255,255,255,0.2)]" : "border-black dark:border-neutral-700 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] dark:shadow-[2px_2px_0px_0px_rgba(255,255,255,0.2)]"
         )}
       >
-        {/* Selection Toggle */}
         <div className="absolute top-2 right-2 z-20 opacity-0 group-hover:opacity-100 transition-opacity duration-200" style={{ opacity: isSelected ? 1 : undefined }}>
           <button
             onClick={(e) => { e.stopPropagation(); onToggleSelection(e); }}
@@ -229,7 +260,6 @@ export const DrawingCard: React.FC<DrawingCardProps> = ({
           </button>
         </div>
 
-        {/* Preview Area */}
         <div
           onClick={(e) => !isTrash && onClick(drawing.id, e)}
           className={clsx(
@@ -238,23 +268,24 @@ export const DrawingCard: React.FC<DrawingCardProps> = ({
             isTrash && "cursor-default"
           )}
         >
-          {/* Placeholder Grid Pattern */}
           <div className="absolute inset-0 opacity-[0.3] bg-[linear-gradient(to_right,#80808012_1px,transparent_1px),linear-gradient(to_bottom,#80808012_1px,transparent_1px)] [background-size:24px_24px]"></div>
 
           {previewSvg ? (
             <div
-              className="w-full h-full p-6 flex items-center justify-center [&>svg]:w-full [&>svg]:h-full [&>svg]:object-contain [&>svg]:drop-shadow-sm dark:[&>svg]:invert dark:[&>svg_rect[fill='white']]:opacity-0 dark:[&>svg_rect[fill='#ffffff']]:opacity-0 transition-transform duration-500 group-hover:scale-105"
+              className={clsx(
+                "w-full h-full p-3 sm:p-4 lg:p-5 flex items-center justify-center [&>svg]:w-auto [&>svg]:h-auto [&>svg]:max-w-full [&>svg]:max-h-full [&>svg]:drop-shadow-sm transition-transform duration-500",
+                !hasEmbeddedImages && "dark:[&>svg]:invert dark:[&>svg_rect[fill='white']]:opacity-0 dark:[&>svg_rect[fill='#ffffff']]:opacity-0"
+              )}
               dangerouslySetInnerHTML={{ __html: previewSvg }}
             />
           ) : (
-            <div className="w-24 h-24 bg-white dark:bg-neutral-900 rounded-2xl shadow-sm flex items-center justify-center text-neutral-300 dark:text-neutral-400 border border-slate-100 dark:border-neutral-700 transform group-hover:scale-110 group-hover:rotate-3 transition-all duration-500">
-              <PenTool size={40} strokeWidth={1.5} />
+            <div className="w-16 h-16 sm:w-20 sm:h-20 lg:w-24 lg:h-24 bg-white dark:bg-neutral-900 rounded-2xl shadow-sm flex items-center justify-center text-neutral-300 dark:text-neutral-400 border border-slate-100 dark:border-neutral-700 transform group-hover:scale-110 group-hover:rotate-3 transition-all duration-500">
+              <PenTool size={32} strokeWidth={1.5} className="sm:w-9 sm:h-9 lg:w-10 lg:h-10" />
             </div>
           )}
         </div>
 
-        {/* Footer */}
-        <div className="p-5 bg-white dark:bg-neutral-900 rounded-b-2xl relative z-10">
+        <div className="p-3 sm:p-4 lg:p-5 bg-white dark:bg-neutral-900 rounded-b-2xl relative z-10">
           {isRenaming ? (
             <form
               onSubmit={handleRenameSubmit}
@@ -270,39 +301,57 @@ export const DrawingCard: React.FC<DrawingCardProps> = ({
                 onBlur={() => setIsRenaming(false)}
                 onDragStart={(e) => e.stopPropagation()}
                 onMouseDown={(e) => e.stopPropagation()}
-                className="w-full px-2 py-1 -ml-2 text-base font-bold text-slate-900 dark:text-white border-2 border-black dark:border-neutral-600 rounded-lg focus:outline-none shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] dark:shadow-[2px_2px_0px_0px_rgba(255,255,255,0.2)] bg-white dark:bg-neutral-800"
+                className="w-full px-2 py-1 -ml-2 text-sm sm:text-base font-bold text-slate-900 dark:text-white border-2 border-black dark:border-neutral-600 rounded-lg focus:outline-none shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] dark:shadow-[2px_2px_0px_0px_rgba(255,255,255,0.2)] bg-white dark:bg-neutral-800"
               />
             </form>
           ) : (
             <h3
-              className="text-base font-bold text-slate-800 dark:text-neutral-100 truncate cursor-text select-none group-hover:text-neutral-900 dark:group-hover:text-white transition-colors"
+              className="text-sm sm:text-base font-bold text-slate-800 dark:text-neutral-100 truncate cursor-text select-none group-hover:text-neutral-900 dark:group-hover:text-white transition-colors"
               title={drawing.name}
               onDoubleClick={(e) => {
                 e.stopPropagation();
-                setIsRenaming(true);
+                const canRename =
+                  !isTrash &&
+                  (!isShared ||
+                    drawing.accessLevel === "edit" ||
+                    drawing.accessLevel === "owner");
+                if (canRename) setIsRenaming(true);
               }}
             >
               {drawing.name}
             </h3>
           )}
-          <div className="flex items-center justify-between mt-3 relative">
-            <p className="text-[11px] font-medium text-slate-400 dark:text-neutral-500 flex items-center gap-1.5">
-              <Clock size={11} />
+          <div className="flex items-center justify-between mt-2.5 sm:mt-3 relative">
+            <p className="text-[10px] sm:text-[11px] font-medium text-slate-400 dark:text-neutral-500 flex items-center gap-1 sm:gap-1.5">
+              <Clock size={10} className="sm:w-[11px] sm:h-[11px]" />
               {formatDistanceToNow(drawing.updatedAt)} ago
             </p>
 
             <div className="relative" onClick={e => e.stopPropagation()}>
               <button
-                onClick={() => setShowCollectionDropdown(!showCollectionDropdown)}
+                onClick={() => {
+                  if (isShared) return;
+                  setShowCollectionDropdown(!showCollectionDropdown);
+                }}
                 data-testid={`collection-picker-${drawing.id}`}
                 aria-haspopup="listbox"
                 aria-expanded={showCollectionDropdown}
-                className="px-2 py-1 rounded-md bg-slate-50 dark:bg-neutral-800 hover:bg-neutral-100 dark:hover:bg-neutral-800 hover:text-neutral-900 dark:hover:text-neutral-200 text-slate-500 dark:text-neutral-400 text-[10px] font-bold uppercase tracking-wide max-w-[120px] truncate transition-all cursor-pointer border border-slate-100 dark:border-neutral-700 hover:border-neutral-300 dark:hover:border-neutral-600"
+                disabled={isShared}
+                className={clsx(
+                  "px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wide max-w-[120px] truncate transition-all border",
+                  isShared
+                    ? "bg-slate-100 dark:bg-neutral-800 text-slate-400 dark:text-neutral-500 border-slate-200 dark:border-neutral-700 cursor-not-allowed"
+                    : "bg-slate-50 dark:bg-neutral-800 hover:bg-neutral-100 dark:hover:bg-neutral-800 hover:text-neutral-900 dark:hover:text-neutral-200 text-slate-500 dark:text-neutral-400 cursor-pointer border-slate-100 dark:border-neutral-700 hover:border-neutral-300 dark:hover:border-neutral-600"
+                )}
               >
-                {drawing.collectionId ? (collections.find(c => c.id === drawing.collectionId)?.name || 'Collection') : 'Unorganized'}
+                {isShared
+                  ? "Shared"
+                  : drawing.collectionId
+                    ? (collections.find(c => c.id === drawing.collectionId)?.name || 'Collection')
+                    : 'Unorganized'}
               </button>
 
-              {showCollectionDropdown && (
+              {!isShared && showCollectionDropdown && (
                 <>
                   <div className="fixed inset-0 z-10" onClick={() => setShowCollectionDropdown(false)} />
                   <div className="absolute right-0 bottom-8 w-48 bg-white dark:bg-neutral-900 rounded-xl border-2 border-black dark:border-neutral-700 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] dark:shadow-[2px_2px_0px_0px_rgba(255,255,255,0.2)] z-20 py-1 max-h-56 overflow-y-auto custom-scrollbar animate-in fade-in zoom-in-95 duration-100">
@@ -339,7 +388,6 @@ export const DrawingCard: React.FC<DrawingCardProps> = ({
         </div>
       </div>
 
-      {/* Context Menu Portal */}
       {contextMenu && (
         <ContextMenuPortal>
           <div
@@ -352,68 +400,78 @@ export const DrawingCard: React.FC<DrawingCardProps> = ({
               style={{ top: contextMenu.y, left: contextMenu.x }}
               onClick={(e) => e.stopPropagation()}
             >
-              <button
-                onClick={() => {
-                  setIsRenaming(true);
-                  setContextMenu(null);
-                }}
-                className="w-full px-3 py-2 text-sm text-left text-slate-600 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 hover:text-neutral-900 dark:hover:text-white flex items-center gap-2"
-              >
-                <PenTool size={14} /> Rename
-              </button>
-
-              <div
-                className="relative group/move"
-                onMouseEnter={() => setShowMoveSubmenu(true)}
-                onMouseLeave={() => setShowMoveSubmenu(false)}
-              >
+              {(!isTrash &&
+                (!isShared ||
+                  drawing.accessLevel === "edit" ||
+                  drawing.accessLevel === "owner")) ? (
                 <button
-                  className="w-full px-3 py-2 text-sm text-left text-slate-600 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 hover:text-neutral-900 dark:hover:text-white flex items-center justify-between"
+                  onClick={() => {
+                    setIsRenaming(true);
+                    setContextMenu(null);
+                  }}
+                  className="w-full px-3 py-2 text-sm text-left text-slate-600 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 hover:text-neutral-900 dark:hover:text-white flex items-center gap-2"
                 >
-                  <span className="flex items-center gap-2"><FolderInput size={14} /> Move to...</span>
-                  <ArrowRight size={12} />
+                  <PenTool size={14} /> Rename
                 </button>
+              ) : null}
 
-                {showMoveSubmenu && (
-                  <div className="absolute left-full top-0 ml-1 w-40 bg-white dark:bg-neutral-900 rounded-lg border-2 border-black dark:border-neutral-700 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] dark:shadow-[2px_2px_0px_0px_rgba(255,255,255,0.2)] py-1 max-h-64 overflow-y-auto">
-                    <button
-                      onClick={() => { onMoveToCollection(drawing.id, null); setContextMenu(null); }}
-                      className={clsx(
-                        "w-full px-3 py-1.5 text-xs text-left flex items-center justify-between hover:bg-neutral-100 dark:hover:bg-neutral-800",
-                        drawing.collectionId === null ? "text-neutral-900 dark:text-white font-medium" : "text-slate-600 dark:text-neutral-400"
-                      )}
-                    >
-                      Unorganized
-                      {drawing.collectionId === null && <Check size={10} />}
-                    </button>
-                    {collections.map(c => (
+              {!isShared ? (
+                <div
+                  className="relative group/move"
+                  onMouseEnter={() => setShowMoveSubmenu(true)}
+                  onMouseLeave={() => setShowMoveSubmenu(false)}
+                >
+                  <button
+                    className="w-full px-3 py-2 text-sm text-left text-slate-600 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 hover:text-neutral-900 dark:hover:text-white flex items-center justify-between"
+                  >
+                    <span className="flex items-center gap-2"><FolderInput size={14} /> Move to...</span>
+                    <ArrowRight size={12} />
+                  </button>
+
+                  {showMoveSubmenu && (
+                    <div className="absolute left-full top-0 ml-1 w-40 bg-white dark:bg-neutral-900 rounded-lg border-2 border-black dark:border-neutral-700 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] dark:shadow-[2px_2px_0px_0px_rgba(255,255,255,0.2)] py-1 max-h-64 overflow-y-auto">
                       <button
-                        key={c.id}
-                        onClick={() => { onMoveToCollection(drawing.id, c.id); setContextMenu(null); }}
+                        onClick={() => { onMoveToCollection(drawing.id, null); setContextMenu(null); }}
                         className={clsx(
-                          "w-full px-3 py-1.5 text-xs text-left flex items-center justify-between hover:bg-neutral-100 dark:hover:bg-neutral-800 truncate",
-                          drawing.collectionId === c.id ? "text-neutral-900 dark:text-white font-medium" : "text-slate-600 dark:text-neutral-400"
+                          "w-full px-3 py-1.5 text-xs text-left flex items-center justify-between hover:bg-neutral-100 dark:hover:bg-neutral-800",
+                          drawing.collectionId === null ? "text-neutral-900 dark:text-white font-medium" : "text-slate-600 dark:text-neutral-400"
                         )}
                       >
-                        <span className="truncate">{c.name}</span>
-                        {drawing.collectionId === c.id && <Check size={10} />}
+                        Unorganized
+                        {drawing.collectionId === null && <Check size={10} />}
                       </button>
-                    ))}
-                  </div>
-                )}
-              </div>
+                      {collections.map(c => (
+                        <button
+                          key={c.id}
+                          onClick={() => { onMoveToCollection(drawing.id, c.id); setContextMenu(null); }}
+                          className={clsx(
+                            "w-full px-3 py-1.5 text-xs text-left flex items-center justify-between hover:bg-neutral-100 dark:hover:bg-neutral-800 truncate",
+                            drawing.collectionId === c.id ? "text-neutral-900 dark:text-white font-medium" : "text-slate-600 dark:text-neutral-400"
+                          )}
+                        >
+                          <span className="truncate">{c.name}</span>
+                          {drawing.collectionId === c.id && <Check size={10} />}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ) : null}
 
-              <div className="border-t border-slate-50 dark:border-slate-700 my-1"></div>
-
-              <button
-                onClick={() => {
-                  onDuplicate(drawing.id);
-                  setContextMenu(null);
-                }}
-                className="w-full px-3 py-2 text-sm text-left text-slate-600 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 hover:text-neutral-900 dark:hover:text-white flex items-center gap-2"
-              >
-                <Copy size={14} /> Duplicate
-              </button>
+              {!isShared ? (
+                <>
+                  <div className="border-t border-slate-50 dark:border-slate-700 my-1"></div>
+                  <button
+                    onClick={() => {
+                      onDuplicate(drawing.id);
+                      setContextMenu(null);
+                    }}
+                    className="w-full px-3 py-2 text-sm text-left text-slate-600 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 hover:text-neutral-900 dark:hover:text-white flex items-center gap-2"
+                  >
+                    <Copy size={14} /> Duplicate
+                  </button>
+                </>
+              ) : null}
 
               <button
                 onClick={async (e) => {
@@ -433,17 +491,20 @@ export const DrawingCard: React.FC<DrawingCardProps> = ({
                 </div>
               )}
 
-              <div className="border-t border-slate-50 dark:border-slate-700 my-1"></div>
-
-              <button
-                onClick={() => {
-                  onDelete(drawing.id);
-                  setContextMenu(null);
-                }}
-                className="w-full px-3 py-2 text-sm text-left text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-900/30 flex items-center gap-2"
-              >
-                <Trash2 size={14} /> Delete
-              </button>
+              {!isShared ? (
+                <>
+                  <div className="border-t border-slate-50 dark:border-slate-700 my-1"></div>
+                  <button
+                    onClick={() => {
+                      onDelete(drawing.id);
+                      setContextMenu(null);
+                    }}
+                    className="w-full px-3 py-2 text-sm text-left text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-900/30 flex items-center gap-2"
+                  >
+                    <Trash2 size={14} /> Delete
+                  </button>
+                </>
+              ) : null}
             </div>
           </div>
         </ContextMenuPortal>
@@ -451,4 +512,3 @@ export const DrawingCard: React.FC<DrawingCardProps> = ({
     </>
   );
 };
-
