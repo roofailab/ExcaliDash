@@ -27,7 +27,6 @@ const safeSetItem = (key: string, value: string): void => {
     if (!storage || typeof storage.setItem !== "function") return;
     storage.setItem(key, value);
   } catch {
-    // Ignore storage failures (private mode / quota / blocked access).
   }
 };
 
@@ -49,7 +48,6 @@ const safeSetSessionItem = (key: string, value: string): void => {
     if (!storage || typeof storage.setItem !== "function") return;
     storage.setItem(key, value);
   } catch {
-    // Ignore storage failures (private mode / quota / blocked access).
   }
 };
 

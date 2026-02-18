@@ -316,7 +316,6 @@ export const Dashboard: React.FC = () => {
   };
 
   const executePermanentDelete = async (id: string) => {
-    // Close modal immediately, but only remove from the UI after the backend confirms deletion.
     setDrawingToDelete(null);
     try {
       await api.deleteDrawing(id);

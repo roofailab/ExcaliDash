@@ -187,7 +187,6 @@ export const getUserIdentity = (): UserIdentity => {
         return normalized;
       }
     } catch {
-      // Ignore parse errors and regenerate a fresh identity below.
     }
   }
 

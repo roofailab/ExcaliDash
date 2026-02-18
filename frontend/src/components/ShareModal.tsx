@@ -342,7 +342,6 @@ export const ShareModal: React.FC<Props> = ({ drawingId, drawingName, isOpen, on
       <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
       
       <div className="relative w-full max-w-[540px] bg-white dark:bg-neutral-900 rounded-[24px] border-2 border-black dark:border-neutral-700 shadow-[12px_12px_0px_0px_rgba(0,0,0,1)] dark:shadow-[12px_12px_0px_0px_rgba(255,255,255,0.05)] flex flex-col animate-in fade-in zoom-in-95 duration-200">
-        {/* Header */}
         <div className="px-8 py-6 flex items-center justify-between border-b-2 border-black dark:border-neutral-700">
           <h2 className="text-xl font-black text-slate-800 dark:text-neutral-100 truncate pr-4" title={drawingName}>
             Share "{drawingName}"
@@ -363,7 +362,6 @@ export const ShareModal: React.FC<Props> = ({ drawingId, drawingName, isOpen, on
             </div>
           )}
 
-          {/* Add People */}
           <section className="relative">
             <div className="relative group">
               <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-indigo-600 transition-colors">
@@ -399,12 +397,10 @@ export const ShareModal: React.FC<Props> = ({ drawingId, drawingName, isOpen, on
             )}
           </section>
 
-          {/* User List */}
           <section className="space-y-4">
             <h3 className="text-[11px] font-black uppercase tracking-[0.2em] text-slate-400 dark:text-neutral-500 px-1">People with access</h3>
             
             <div className="space-y-1">
-              {/* Owner Row */}
               <div className="flex items-center gap-4 px-1 py-3 min-h-[64px]">
                 <div className="w-11 h-11 rounded-xl bg-slate-100 dark:bg-neutral-800 flex items-center justify-center text-slate-600 dark:text-neutral-300 font-black text-xl border-2 border-black dark:border-neutral-600 shrink-0">
                   {user?.name?.charAt(0).toUpperCase() || "U"}
@@ -418,7 +414,6 @@ export const ShareModal: React.FC<Props> = ({ drawingId, drawingName, isOpen, on
                 <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 dark:text-neutral-500 pr-4 shrink-0">Owner</div>
               </div>
 
-              {/* User Rows */}
               {(sharing?.permissions || []).map((p) => (
                 <div key={p.id} className="flex items-center gap-4 px-1 py-3 min-h-[64px] group">
                   <div className="w-11 h-11 rounded-xl bg-indigo-50 dark:bg-indigo-900/20 flex items-center justify-center text-indigo-600 dark:text-indigo-400 font-black text-xl border-2 border-indigo-600 dark:border-indigo-500 shrink-0">
@@ -452,7 +447,6 @@ export const ShareModal: React.FC<Props> = ({ drawingId, drawingName, isOpen, on
             </div>
           </section>
 
-          {/* General Access */}
           <section className="pt-8 border-t-2 border-black dark:border-neutral-700">
             <h3 className="text-[11px] font-black uppercase tracking-[0.2em] text-slate-400 dark:text-neutral-500 px-1 mb-6">General access</h3>
             
@@ -550,7 +544,6 @@ export const ShareModal: React.FC<Props> = ({ drawingId, drawingName, isOpen, on
           </section>
         </div>
 
-        {/* Footer */}
         <div className="px-8 py-8 flex items-center justify-between border-t-2 border-black dark:border-neutral-700 bg-slate-50 dark:bg-neutral-800/50 rounded-b-[22px]">
           <button
             onClick={() => handleCopy(currentLinkUrl)}

@@ -54,6 +54,7 @@ docker buildx build \
   --tag "$DOCKER_USERNAME/$IMAGE_NAME-frontend:$VERSION" \
   --tag "$DOCKER_USERNAME/$IMAGE_NAME-frontend:latest" \
   --build-arg VITE_APP_VERSION="$VERSION" \
+  --build-arg VITE_APP_BUILD_LABEL="production" \
   --file frontend/Dockerfile \
   --push \
   .

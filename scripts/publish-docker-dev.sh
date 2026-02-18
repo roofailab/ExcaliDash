@@ -52,6 +52,7 @@ docker buildx build \
   --platform linux/amd64,linux/arm64 \
   --tag "$DOCKER_USERNAME/$IMAGE_NAME-frontend:$VERSION" \
   --build-arg VITE_APP_VERSION="$VERSION" \
+  --build-arg VITE_APP_BUILD_LABEL="development" \
   --file frontend/Dockerfile \
   --push \
   .

@@ -75,7 +75,6 @@ export const ImpersonationBanner: React.FC = () => {
             clearLocalImpersonation();
           }
         } catch {
-          // Ignore transient network issues; we'll re-check on next mount or storage event.
         }
       };
 
