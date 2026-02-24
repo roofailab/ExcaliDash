@@ -108,7 +108,7 @@
       "Run `cd ~/projects/ExcaliDash && npm install` and verify it resolves without errors",
       "Run `node ~/projects/ExcaliDash/packages/sync-diagrams/src/index.ts` (or `npx tsx`) and verify it prints `excalidash-sync: ok`"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "category": "backend",
