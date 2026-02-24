@@ -1,0 +1,1 @@
+2026-02-24: Added API_KEYS env var support. Added `# CI / API Key Authentication` + `# API_KEYS=` to backend/.env.example; added `apiKeys: string[]` to Config interface and parsed from env in config.ts. TypeScript compiles clean. PRD item 1 (setup/API_KEYS) complete. Next: implement validateApiKey utility in backend/src/auth/apiKey.ts.
