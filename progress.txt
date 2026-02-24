@@ -2,3 +2,15 @@
 2026-02-24: Implemented manifest read/write module at packages/sync-diagrams/src/manifest.ts. Types: SyncManifest, DrawingEntry. Exports: readManifest (returns empty manifest on ENOENT), writeManifest (formatted JSON), getDrawingEntry, updateDrawingEntry. TSC passes.
 2026-02-24: Implemented Mermaid file discovery/extraction at packages/sync-diagrams/src/mermaid.ts. discoverMermaidFiles (recursive readdirSync, sorted), extractMermaidContent (first # heading as title, first ```mermaid block as code), computeContentHash (sha256:<hex> via node:crypto). TSC passes.
 2026-02-24: Implemented ExcaliDash API client at packages/sync-diagrams/src/api.ts. ExcaliDashClient class with getDrawing/createDrawing/updateDrawing using native fetch + X-API-Key header. Non-2xx throws descriptive errors with status. TSC passes. Next: src/convert.ts (Mermaid-to-Excalidraw wrapper).
+
+[2026-02-24] Implement Mermaid-to-Excalidraw conversion wrapper (convert.ts)
+- Created packages/sync-diagrams/src/convert.ts
+- Added jsdom + @types/jsdom deps to sync-diagrams package.json
+- Both @excalidraw/mermaid-to-excalidraw and @excalidraw/excalidraw are browser-only bundles
+  (require document/window globals). Used jsdom to shim DOM env before dynamic import.
+- @excalidraw/excalidraw's convertToExcalidrawElements is webpack-bundled and can't run in Node.js;
+  implemented minimal equivalent (skeletonToElements) that adds required ExcalidrawElement fields
+  (seed, version, versionNonce, isDeleted, frameId, boundElements, updated, link, locked, angle).
+- getBBox mocked on SVGElement.prototype to read explicit SVG attrs (mermaid sets width/height attrs).
+- Tested: flowchart with 4 nodes produces 7 elements with all required keys.
+- TypeScript compilation clean.

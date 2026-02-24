@@ -177,7 +177,7 @@
       "Export the default appState for use by the sync orchestrator",
       "Verify TypeScript compilation succeeds"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "category": "backend",
