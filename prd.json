@@ -52,7 +52,7 @@
       "Verify existing JWT auth flow is unchanged when X-API-Key header is absent",
       "Verify TypeScript compilation succeeds"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "category": "backend",
@@ -65,7 +65,7 @@
       "  3. If absent: fall through to existing JWT logic",
       "Verify TypeScript compilation succeeds"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "category": "backend",
@@ -76,7 +76,7 @@
       "Add `'X-API-Key'` to the `allowedHeaders` array (after existing entries)",
       "Verify TypeScript compilation succeeds"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "category": "backend",
@@ -93,7 +93,7 @@
       "Test optionalAuth with invalid X-API-Key → 401",
       "Run `cd ~/projects/ExcaliDash/backend && npx vitest run` and verify all tests pass"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "category": "setup",
