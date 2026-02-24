@@ -122,7 +122,7 @@
       "Export parsed options as a typed config object for use by other modules",
       "Verify: run with `--help` or missing env vars → clear error message"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "category": "backend",

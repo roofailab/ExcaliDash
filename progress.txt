@@ -1,13 +1,1 @@
-2026-02-24 — Scaffold packages/sync-diagrams (branch: agent-ci-integration)
-- Created root package.json with workspaces: ["packages/*"]
-- Created packages/sync-diagrams/{package.json,tsconfig.json,src/index.ts}
-  - @your-org/excalidash-sync, type:module, ES2022/Node16, deps: @excalidraw/mermaid-to-excalidraw + @excalidraw/excalidraw
-  - Stub index.ts prints "excalidash-sync: ok" and exits 0
-- npm install resolves workspace; npx tsx packages/sync-diagrams/src/index.ts ✓
-
-2026-02-24 — API key auth tests (branch: agent-ci-integration)
-- Items 4/5/6 were already implemented (requireAuthOrApiKey/optionalAuthOrApiKey wrappers + CORS x-api-key header); marked passes:true
-- Added unit tests:
-  - backend/src/auth/__tests__/apiKey.test.ts (validateApiKey: valid/invalid/empty)
-  - backend/src/middleware/__tests__/auth-apikey.test.ts (requireAuthOrApiKey, optionalAuthOrApiKey: valid key, invalid key, JWT fallthrough)
-- All 117 backend tests pass
+2026-02-24: Implemented CLI argument parsing in packages/sync-diagrams/src/index.ts. Uses node:util parseArgs for --dir (default: docs/diagrams) and --config (default: .excalidraw-sync.json). Validates EXCALIDASH_URL and EXCALIDASH_API_KEY env vars, exits 1 with clear error if missing. Exports SyncOptions type + options object for downstream modules. TSC passes.
