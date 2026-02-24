@@ -136,7 +136,7 @@
       "Export `updateDrawingEntry(manifest: SyncManifest, filePath: string, entry: DrawingEntry): void`",
       "Verify TypeScript compilation succeeds"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "category": "backend",
