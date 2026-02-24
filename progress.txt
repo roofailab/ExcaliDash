@@ -21,3 +21,11 @@
 - Added files field to CreateDrawingPayload/UpdateDrawingPayload in api.ts (needed for non-native diagram types that render as embedded images).
 - Build clean; API key middleware tests (5/5) pass.
 - X-API-Key backend middleware was already fully implemented (auth.ts requireAuthOrApiKey/optionalAuthOrApiKey, config.ts API_KEYS + CI_SERVICE_ACCOUNT_EMAIL, .env.example documented). Drawing routes use it correctly.
+
+[2026-02-24] CI workflow template and AGENTS.md snippet
+- Created packages/sync-diagrams/workflow-template/sync-diagrams.yml per spec §4.4.
+  Triggers on docs/diagrams/**/*.mermaid.md push, runs npx @your-org/excalidash-sync, auto-commits manifest via stefanzweifel/git-auto-commit-action@v5.
+- Created packages/sync-diagrams/workflow-template/AGENTS-snippet.md per spec §11.
+  Copy-paste into consuming repos' AGENTS.md: diagram conventions, flowchart preference, file naming, heading-as-title rule, file format example.
+- prd.json updated: sync orchestrator, CI workflow, AGENTS snippet all marked passing.
+- Remaining: end-to-end integration test (needs local ExcaliDash), README for sync-diagrams package.
