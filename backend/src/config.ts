@@ -26,6 +26,7 @@ interface Config {
   bootstrapSetupCodeTtlMs: number;
   bootstrapSetupCodeMaxAttempts: number;
   apiKeys: string[];
+  ciServiceAccountEmail: string;
 }
 
 export type AuthMode = "local" | "hybrid" | "oidc_enforced";
@@ -203,6 +204,7 @@ export const config: Config = {
   bootstrapSetupCodeTtlMs: getRequiredEnvNumber("BOOTSTRAP_SETUP_CODE_TTL_MS", 15 * 60 * 1000),
   bootstrapSetupCodeMaxAttempts: getRequiredEnvNumber("BOOTSTRAP_SETUP_CODE_MAX_ATTEMPTS", 10),
   apiKeys: process.env.API_KEYS ? process.env.API_KEYS.split(',').map(k => k.trim()).filter(Boolean) : [],
+  ciServiceAccountEmail: getOptionalEnv("CI_SERVICE_ACCOUNT_EMAIL", "ci@excalidash.local"),
 };
 
 if (config.nodeEnv === "production") {
