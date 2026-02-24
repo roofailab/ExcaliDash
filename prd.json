@@ -148,7 +148,7 @@
       "Export `computeContentHash(filePath: string): string` — returns `sha256:<hex>` of the file contents using `node:crypto`",
       "Verify TypeScript compilation succeeds"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "category": "backend",
