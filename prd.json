@@ -21,7 +21,7 @@
       "Export `API_KEY_HEADER = 'x-api-key'` constant",
       "Verify TypeScript compilation succeeds: `cd ~/projects/ExcaliDash/backend && npx tsc --noEmit`"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "category": "backend",
