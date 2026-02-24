@@ -202,7 +202,7 @@
       "Wire up in `src/index.ts`: call `syncAll()` with parsed CLI options, exit 0 if no failures, exit 1 if any failed",
       "Verify TypeScript compilation succeeds"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "category": "integration",
@@ -232,7 +232,7 @@
       "  - Auto-commit `.excalidraw-sync.json` using `stefanzweifel/git-auto-commit-action@v5`",
       "Validate with `actionlint` if available: `actionlint ~/projects/ExcaliDash/packages/sync-diagrams/workflow-template/sync-diagrams.yml`"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "category": "infrastructure",
@@ -242,7 +242,7 @@
       "Include the AGENTS.md content from spec §11: diagram conventions, flowchart preference, file naming, heading-as-title rule",
       "This file is intended to be copied into consuming repos' AGENTS.md"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "category": "setup",
