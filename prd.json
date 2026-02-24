@@ -163,7 +163,7 @@
       "Include proper error handling: throw descriptive errors with status codes on non-2xx responses",
       "Verify TypeScript compilation succeeds"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "category": "backend",
