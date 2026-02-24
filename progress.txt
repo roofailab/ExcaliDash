@@ -14,3 +14,10 @@
 - getBBox mocked on SVGElement.prototype to read explicit SVG attrs (mermaid sets width/height attrs).
 - Tested: flowchart with 4 nodes produces 7 elements with all required keys.
 - TypeScript compilation clean.
+
+[2026-02-24] Implement sync-diagrams core logic (index.ts main sync loop)
+- Wired all modules (api, manifest, mermaid, convert) into the main sync loop in index.ts.
+- Loop: discover *.mermaid.md → hash → skip if unchanged → check ExcaliDash updatedAt (skip if human-edited) → convert → POST/PUT → update manifest → exit 0/1.
+- Added files field to CreateDrawingPayload/UpdateDrawingPayload in api.ts (needed for non-native diagram types that render as embedded images).
+- Build clean; API key middleware tests (5/5) pass.
+- X-API-Key backend middleware was already fully implemented (auth.ts requireAuthOrApiKey/optionalAuthOrApiKey, config.ts API_KEYS + CI_SERVICE_ACCOUNT_EMAIL, .env.example documented). Drawing routes use it correctly.

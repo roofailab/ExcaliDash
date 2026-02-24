@@ -9,6 +9,7 @@ export type CreateDrawingPayload = {
   name: string;
   elements: unknown[];
   appState: Record<string, unknown>;
+  files?: Record<string, unknown>;
   collectionId?: string;
 };
 
@@ -16,6 +17,7 @@ export type UpdateDrawingPayload = {
   name: string;
   elements: unknown[];
   appState: Record<string, unknown>;
+  files?: Record<string, unknown>;
 };
 
 export class ExcaliDashClient {
