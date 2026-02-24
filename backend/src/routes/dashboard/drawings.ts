@@ -26,6 +26,8 @@ export const registerDrawingRoutes = (
     prisma,
     requireAuth,
     optionalAuth,
+    requireAuthOrApiKey,
+    optionalAuthOrApiKey,
     asyncHandler,
     parseJsonField,
     validateImportedDrawing,
@@ -67,7 +69,7 @@ export const registerDrawingRoutes = (
     return 90 * 24 * 60 * 60 * 1000;
   };
 
-  app.get("/drawings", requireAuth, asyncHandler(async (req, res) => {
+  app.get("/drawings", requireAuthOrApiKey, asyncHandler(async (req, res) => {
     if (!req.user) {
       return res.status(401).json({ error: "Unauthorized" });
     }
@@ -319,7 +321,7 @@ export const registerDrawingRoutes = (
     });
   }));
 
-  app.get("/drawings/:id", optionalAuth, asyncHandler(async (req, res) => {
+  app.get("/drawings/:id", optionalAuthOrApiKey, asyncHandler(async (req, res) => {
     const principal = await getRequestPrincipal(req);
 
     const { id } = req.params;
@@ -346,7 +348,7 @@ export const registerDrawingRoutes = (
     });
   }));
 
-  app.post("/drawings", requireAuth, asyncHandler(async (req, res) => {
+  app.post("/drawings", requireAuthOrApiKey, asyncHandler(async (req, res) => {
     if (!req.user) return res.status(401).json({ error: "Unauthorized" });
 
     const isImportedDrawing = req.headers["x-imported-file"] === "true";
@@ -406,7 +408,7 @@ export const registerDrawingRoutes = (
     });
   }));
 
-  app.put("/drawings/:id", optionalAuth, asyncHandler(async (req, res) => {
+  app.put("/drawings/:id", optionalAuthOrApiKey, asyncHandler(async (req, res) => {
     const principal = await getRequestPrincipal(req);
 
     const { id } = req.params;

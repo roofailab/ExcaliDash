@@ -21,7 +21,7 @@ import {
   appStateSchema,
 } from "./security";
 import { config } from "./config";
-import { authModeService, requireAuth, optionalAuth } from "./middleware/auth";
+import { authModeService, requireAuth, optionalAuth, requireAuthOrApiKey, optionalAuthOrApiKey } from "./middleware/auth";
 import { errorHandler, asyncHandler } from "./middleware/errorHandler";
 import authRouter from "./auth";
 import { logAuditEvent } from "./utils/audit";
@@ -297,7 +297,7 @@ app.use(
   cors({
     origin: (origin, cb) => cb(null, isAllowedOrigin(origin ?? undefined)),
     credentials: true,
-    allowedHeaders: ["Content-Type", "Authorization", "x-csrf-token", "x-imported-file"],
+    allowedHeaders: ["Content-Type", "Authorization", "x-csrf-token", "x-imported-file", "x-api-key"],
     exposedHeaders: ["x-csrf-token", "x-request-id"],
   })
 );
@@ -643,6 +643,8 @@ registerDashboardRoutes(app, {
   prisma,
   requireAuth,
   optionalAuth,
+  requireAuthOrApiKey,
+  optionalAuthOrApiKey,
   asyncHandler,
   parseJsonField,
   sanitizeText,

@@ -153,6 +153,11 @@ export const registerCsrfProtection = ({
       return next();
     }
 
+    // API key authenticated requests are non-browser clients; CSRF does not apply.
+    if (req.headers["x-api-key"]) {
+      return next();
+    }
+
     const origin = req.headers["origin"];
     const referer = req.headers["referer"];
     const originValue = Array.isArray(origin) ? origin[0] : origin;

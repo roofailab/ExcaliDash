@@ -5,6 +5,7 @@ import { PrismaClient } from "../generated/client";
 import { prisma as defaultPrisma } from "../db/prisma";
 import { createAuthModeService, type AuthModeService } from "../auth/authMode";
 import { ACCESS_TOKEN_COOKIE_NAME, readCookie } from "../auth/cookies";
+import { API_KEY_HEADER, validateApiKey, getCiServiceAccountUser } from "../auth/apiKey";
 
 declare global {
   namespace Express {
@@ -268,9 +269,56 @@ export const createAuthMiddleware = ({
     next();
   };
 
+  const tryApiKeyAuth = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<boolean> => {
+    const rawKey = req.headers[API_KEY_HEADER];
+    const apiKey = Array.isArray(rawKey) ? rawKey[0] : rawKey;
+    if (!apiKey) return false;
+
+    const valid = await validateApiKey(apiKey);
+    if (!valid) {
+      res.status(401).json({ error: "Unauthorized", message: "Invalid API key" });
+      return true;
+    }
+    try {
+      req.user = await getCiServiceAccountUser(prisma);
+      next();
+    } catch (error) {
+      console.error("Error fetching CI service account:", error);
+      res.status(500).json({
+        error: "Internal server error",
+        message: "CI service account not configured",
+      });
+    }
+    return true;
+  };
+
+  const requireAuthOrApiKey = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    const handled = await tryApiKeyAuth(req, res, next);
+    if (!handled) return requireAuth(req, res, next);
+  };
+
+  const optionalAuthOrApiKey = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    const handled = await tryApiKeyAuth(req, res, next);
+    if (!handled) return optionalAuth(req, res, next);
+  };
+
   return {
     requireAuth,
     optionalAuth,
+    requireAuthOrApiKey,
+    optionalAuthOrApiKey,
   };
 };
 
@@ -283,3 +331,5 @@ const defaultAuthMiddleware = createAuthMiddleware({
 export const authModeService = defaultAuthModeService;
 export const requireAuth = defaultAuthMiddleware.requireAuth;
 export const optionalAuth = defaultAuthMiddleware.optionalAuth;
+export const requireAuthOrApiKey = defaultAuthMiddleware.requireAuthOrApiKey;
+export const optionalAuthOrApiKey = defaultAuthMiddleware.optionalAuthOrApiKey;
