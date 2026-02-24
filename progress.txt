@@ -29,3 +29,8 @@
   Copy-paste into consuming repos' AGENTS.md: diagram conventions, flowchart preference, file naming, heading-as-title rule, file format example.
 - prd.json updated: sync orchestrator, CI workflow, AGENTS snippet all marked passing.
 - Remaining: end-to-end integration test (needs local ExcaliDash), README for sync-diagrams package.
+
+[2026-02-24] Add README for sync-diagrams package
+- Created packages/sync-diagrams/README.md
+- Covers: purpose, installation, CLI flags (--dir, --config), env vars (EXCALIDASH_URL, EXCALIDASH_API_KEY), manifest format (.excalidraw-sync.json), CI setup (workflow template + ExcaliDash key setup steps), Mermaid support matrix from spec §6, one-way sync limitation.
+- prd.json: README item marked passing. Only remaining failing item: end-to-end integration test (needs live ExcaliDash instance).

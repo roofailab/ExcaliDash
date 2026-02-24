@@ -251,6 +251,6 @@
       "Create `~/projects/ExcaliDash/packages/sync-diagrams/README.md`",
       "Document: purpose, installation (`npx @your-org/excalidash-sync`), CLI flags (--dir, --config), required env vars (EXCALIDASH_URL, EXCALIDASH_API_KEY), `.excalidraw-sync.json` manifest format, CI setup instructions (reference workflow template), known limitations (Mermaid diagram type support matrix from spec §6)"
     ],
-    "passes": false
+    "passes": true
   }
 ]
