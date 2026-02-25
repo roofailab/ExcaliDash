@@ -510,6 +510,28 @@ export const sanitizeDrawingData = (data: {
                   continue;
                 }
 
+                const isSvgBase64 = normalizedValue.startsWith(
+                  "data:image/svg+xml;base64,"
+                );
+
+                if (isSvgBase64) {
+                  if (value.length > MAX_DATAURL_SIZE) {
+                    file[key] = "";
+                  } else {
+                    try {
+                      const b64 = value.slice("data:image/svg+xml;base64,".length);
+                      const svgRaw = Buffer.from(b64, "base64").toString("utf-8");
+                      const cleanSvg = sanitizeSvg(svgRaw);
+                      file[key] =
+                        "data:image/svg+xml;base64," +
+                        Buffer.from(cleanSvg, "utf-8").toString("base64");
+                    } catch {
+                      file[key] = "";
+                    }
+                  }
+                  continue;
+                }
+
                 const isSafeImageType = safeImageTypes.some((type) =>
                   normalizedValue.startsWith(type)
                 );

@@ -32,6 +32,8 @@ export type DashboardRouteDeps = {
   prisma: PrismaClient;
   requireAuth: express.RequestHandler;
   optionalAuth: express.RequestHandler;
+  requireAuthOrApiKey: express.RequestHandler;
+  optionalAuthOrApiKey: express.RequestHandler;
   asyncHandler: <T = void>(
     fn: (req: express.Request, res: express.Response, next: express.NextFunction) => Promise<T>
   ) => express.RequestHandler;
