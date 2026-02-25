@@ -45,6 +45,7 @@ backend/src/generated/
 frontend/dist/
 frontend/build/
 backend/dist/
+packages/*/dist/
 
 # E2E Testing
 e2e/node_modules/
@@ -133,3 +134,5 @@ Thumbs.db
 jq-filter.jq
 prompt.md
 ralph.sh
+prd.json
+progress.txt

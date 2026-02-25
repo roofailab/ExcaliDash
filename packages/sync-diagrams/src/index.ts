@@ -87,7 +87,6 @@ for (const filePath of mermaidFiles) {
     continue;
   }
 
-  const now = new Date().toISOString();
   const drawingName = title || entry?.drawingName || 'Untitled Diagram';
 
   if (entry?.drawingId) {
@@ -98,10 +97,11 @@ for (const filePath of mermaidFiles) {
         appState: { ...DEFAULT_APP_STATE },
         files: conversionFiles,
       });
+      const syncedAt = new Date().toISOString();
       updateDrawingEntry(manifest, filePath, {
         ...entry,
         drawingName,
-        lastSyncedAt: now,
+        lastSyncedAt: syncedAt,
         lastSyncedHash: hash,
         skippedAt: null,
       });
@@ -119,10 +119,11 @@ for (const filePath of mermaidFiles) {
         files: conversionFiles,
         ...(manifest.collectionId ? { collectionId: manifest.collectionId } : {}),
       });
+      const syncedAt = new Date().toISOString();
       updateDrawingEntry(manifest, filePath, {
         drawingId: created.id,
         drawingName,
-        lastSyncedAt: now,
+        lastSyncedAt: syncedAt,
         lastSyncedHash: hash,
         skippedAt: null,
       });
