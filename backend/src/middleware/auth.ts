@@ -278,7 +278,8 @@ export const createAuthMiddleware = ({
     const apiKey = Array.isArray(rawKey) ? rawKey[0] : rawKey;
     if (!apiKey) return false;
 
-    const valid = await validateApiKey(apiKey);
+    // CSRF middleware may have already validated the key — skip redundant bcrypt.
+    const valid = res.locals?.apiKeyValidated === true || await validateApiKey(apiKey);
     if (!valid) {
       res.status(401).json({ error: "Unauthorized", message: "Invalid API key" });
       return true;

@@ -154,12 +154,14 @@ export const registerCsrfProtection = ({
     }
 
     // API key authenticated requests are non-browser clients; CSRF does not apply.
-    // Only bypass CSRF if the key is actually valid.
+    // Only bypass CSRF if the key is actually valid. Flag it so auth middleware
+    // can skip the redundant bcrypt comparison.
     const apiKeyValue = req.headers["x-api-key"];
     if (apiKeyValue) {
       const { validateApiKey } = await import("../auth/apiKey");
       const key = Array.isArray(apiKeyValue) ? apiKeyValue[0] : apiKeyValue;
       if (await validateApiKey(key)) {
+        res.locals.apiKeyValidated = true;
         return next();
       }
       // Invalid key — fall through to normal CSRF checks (auth middleware will reject later).

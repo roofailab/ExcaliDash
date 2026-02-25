@@ -51,7 +51,7 @@ npx @your-org/excalidash-sync --dir docs/diagrams --config .excalidraw-sync.json
 
 Each diagram is a Markdown file with a `#` heading and a single `mermaid` code block:
 
-```markdown
+````markdown
 # Auth Flow
 
 Brief description.
@@ -63,7 +63,7 @@ flowchart TD
     C -->|Yes| D[Dashboard]
     C -->|No| E[Login Page]
 ```
-```
+````
 
 - **Naming:** kebab-case, e.g. `auth-flow.mermaid.md`
 - The first `#` heading becomes the drawing name on ExcaliDash
@@ -133,6 +133,8 @@ Copy `workflow-template/sync-diagrams.yml` into `.github/workflows/` in your con
 
 ```yaml
 name: Sync Diagrams to ExcaliDash
+permissions:
+  contents: write
 on:
   push:
     paths:
@@ -162,7 +164,7 @@ Add `EXCALIDASH_URL` and `EXCALIDASH_API_KEY` to your repo's GitHub Actions secr
 
 1. Generate an API key and bcrypt-hash it:
    ```sh
-   node -e "const b=require('bcrypt'); b.hash('your-key', 10).then(console.log)"
+   npx -y bcryptjs -e "const b=require('bcryptjs'); console.log(b.hashSync('your-key', 10))"
    ```
 2. Add the hash to ExcaliDash's `API_KEYS` env var (comma-separated for multiple keys)
 3. Add `CI_SERVICE_ACCOUNT_EMAIL` to ExcaliDash's env (default: `ci@excalidash.local`)

@@ -17,7 +17,7 @@ Rules:
 
 File format:
 
-```markdown
+````markdown
 # Diagram Title
 
 Brief description of what this diagram represents.
@@ -29,4 +29,4 @@ flowchart TD
     C -->|Yes| D[Result A]
     C -->|No| E[Result B]
 ```
-```
+````
