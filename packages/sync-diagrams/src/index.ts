@@ -2,12 +2,13 @@ import { parseArgs } from 'node:util';
 import { ExcaliDashClient } from './api.js';
 import { readManifest, writeManifest, getDrawingEntry, updateDrawingEntry } from './manifest.js';
 import { discoverMermaidFiles, extractMermaidContent, computeContentHash } from './mermaid.js';
-import { convertMermaid, DEFAULT_APP_STATE } from './convert.js';
+import { convertMermaid, DEFAULT_APP_STATE, closeConvertBrowser } from './convert.js';
 
 const { values } = parseArgs({
   options: {
     dir: { type: 'string', default: 'docs/diagrams' },
     config: { type: 'string', default: '.excalidraw-sync.json' },
+    collection: { type: 'string' },
   },
   strict: true,
 });
@@ -24,23 +25,29 @@ if (!excalidashUrl || !apiKey) {
   process.exit(1);
 }
 
-export type SyncOptions = {
-  dir: string;
-  configPath: string;
-  excalidashUrl: string;
-  apiKey: string;
-};
+const client = new ExcaliDashClient(excalidashUrl, apiKey);
+const manifest = readManifest(values.config as string);
+const mermaidFiles = discoverMermaidFiles(values.dir as string);
 
-export const options: SyncOptions = {
-  dir: values.dir as string,
-  configPath: values.config as string,
-  excalidashUrl,
-  apiKey,
-};
-
-const client = new ExcaliDashClient(options.excalidashUrl, options.apiKey);
-const manifest = readManifest(options.configPath);
-const mermaidFiles = discoverMermaidFiles(options.dir);
+// Resolve collection: prefer manifest cache, then create/find by --collection name.
+const collectionName = values.collection as string | undefined;
+if (collectionName && !manifest.collectionId) {
+  try {
+    const existing = await client.getCollections();
+    const match = existing.find((c) => c.name === collectionName);
+    if (match) {
+      manifest.collectionId = match.id;
+      console.log(`Using existing collection "${collectionName}" (${match.id})`);
+    } else {
+      const created = await client.createCollection(collectionName);
+      manifest.collectionId = created.id;
+      console.log(`Created collection "${collectionName}" (${created.id})`);
+    }
+  } catch (err) {
+    console.error(`Failed to resolve collection "${collectionName}": ${err}`);
+    process.exit(1);
+  }
+}
 
 let anyFailed = false;
 
@@ -135,5 +142,6 @@ for (const filePath of mermaidFiles) {
   }
 }
 
-writeManifest(options.configPath, manifest);
+writeManifest(values.config as string, manifest);
+await closeConvertBrowser();
 process.exit(anyFailed ? 1 : 0);

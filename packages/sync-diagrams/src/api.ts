@@ -20,6 +20,11 @@ export type UpdateDrawingPayload = {
   files?: Record<string, unknown>;
 };
 
+export type Collection = {
+  id: string;
+  name: string;
+};
+
 export class ExcaliDashClient {
   private readonly baseUrl: string;
   private readonly headers: Record<string, string>;
@@ -53,6 +58,25 @@ export class ExcaliDashClient {
       throw new Error(`POST /drawings failed: ${res.status} ${res.statusText} — ${body}`);
     }
     return res.json() as Promise<{ id: string }>;
+  }
+
+  async getCollections(): Promise<Collection[]> {
+    const res = await fetch(`${this.baseUrl}/collections`, { headers: this.headers });
+    if (!res.ok) throw new Error(`GET /collections failed: ${res.status} ${res.statusText}`);
+    return res.json() as Promise<Collection[]>;
+  }
+
+  async createCollection(name: string): Promise<Collection> {
+    const res = await fetch(`${this.baseUrl}/collections`, {
+      method: 'POST',
+      headers: this.headers,
+      body: JSON.stringify({ name }),
+    });
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(`POST /collections failed: ${res.status} ${res.statusText} — ${body}`);
+    }
+    return res.json() as Promise<Collection>;
   }
 
   async updateDrawing(id: string, payload: UpdateDrawingPayload): Promise<void> {

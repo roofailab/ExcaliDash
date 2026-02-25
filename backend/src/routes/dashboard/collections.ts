@@ -9,6 +9,7 @@ export const registerCollectionRoutes = (
   const {
     prisma,
     requireAuth,
+    requireAuthOrApiKey,
     asyncHandler,
     collectionNameSchema,
     sanitizeText,
@@ -18,7 +19,7 @@ export const registerCollectionRoutes = (
     logAuditEvent,
   } = deps;
 
-  app.get("/collections", requireAuth, asyncHandler(async (req, res) => {
+  app.get("/collections", requireAuthOrApiKey, asyncHandler(async (req, res) => {
     if (!req.user) return res.status(401).json({ error: "Unauthorized" });
     const trashCollectionId = getUserTrashCollectionId(req.user.id);
     await ensureTrashCollection(prisma, req.user.id);
@@ -38,7 +39,7 @@ export const registerCollectionRoutes = (
     return res.json(collections);
   }));
 
-  app.post("/collections", requireAuth, asyncHandler(async (req, res) => {
+  app.post("/collections", requireAuthOrApiKey, asyncHandler(async (req, res) => {
     if (!req.user) return res.status(401).json({ error: "Unauthorized" });
 
     const parsed = collectionNameSchema.safeParse(req.body.name);
