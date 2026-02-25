@@ -56,13 +56,13 @@ Each diagram is a Markdown file with a `#` heading and a single `mermaid` code b
 
 Brief description.
 
-​```mermaid
+```mermaid
 flowchart TD
     A[User] --> B[Auth Service]
     B --> C{Valid?}
     C -->|Yes| D[Dashboard]
     C -->|No| E[Login Page]
-​```
+```
 ```
 
 - **Naming:** kebab-case, e.g. `auth-flow.mermaid.md`

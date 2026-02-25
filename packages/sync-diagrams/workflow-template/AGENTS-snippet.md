@@ -22,11 +22,11 @@ File format:
 
 Brief description of what this diagram represents.
 
-​```mermaid
+```mermaid
 flowchart TD
     A[Start] --> B[Step]
     B --> C{Decision}
     C -->|Yes| D[Result A]
     C -->|No| E[Result B]
-​```
+```
 ```

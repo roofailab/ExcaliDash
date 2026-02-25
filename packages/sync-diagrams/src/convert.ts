@@ -156,7 +156,11 @@ function normalizeImageFiles(elements: unknown[], files: Record<string, unknown>
     const dataURL = file['dataURL'] as string;
     const comma = dataURL.indexOf(',');
     if (comma < 0) continue;
-    const svg = Buffer.from(dataURL.slice(comma + 1), 'base64').toString('utf-8');
+    const meta = dataURL.slice(0, comma);
+    const payload = dataURL.slice(comma + 1);
+    const svg = meta.includes(';base64')
+      ? Buffer.from(payload, 'base64').toString('utf-8')
+      : decodeURIComponent(payload);
 
     const vbMatch = svg.match(/\bviewBox="([^"]+)"/i);
     if (!vbMatch) continue;

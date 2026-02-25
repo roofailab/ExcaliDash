@@ -63,21 +63,31 @@ for (const filePath of mermaidFiles) {
   if (entry?.drawingId) {
     try {
       const drawing = await client.getDrawing(entry.drawingId);
-      if (new Date(drawing.updatedAt) > new Date(entry.lastSyncedAt)) {
+      const syncedDate = new Date(entry.lastSyncedAt);
+      if (!isNaN(syncedDate.getTime()) && new Date(drawing.updatedAt) > syncedDate) {
         console.log(`Skipping ${filePath} — ExcaliDash version is newer (human edits detected)`);
         updateDrawingEntry(manifest, filePath, { ...entry, skippedAt: new Date().toISOString() });
         continue;
       }
     } catch (err) {
-      console.error(`Failed to check existing drawing for ${filePath}: ${err}`);
-      anyFailed = true;
-      continue;
+      const msg = String(err);
+      if (msg.includes('404')) {
+        console.warn(`Drawing ${entry.drawingId} no longer exists for ${filePath}, will re-create`);
+        updateDrawingEntry(manifest, filePath, { ...entry, drawingId: '', lastSyncedAt: '', lastSyncedHash: '' });
+      } else {
+        console.error(`Failed to check existing drawing for ${filePath}: ${err}`);
+        anyFailed = true;
+        continue;
+      }
     }
   }
 
-  const { title, mermaidCode } = extractMermaidContent(filePath);
-  if (!mermaidCode) {
-    console.error(`No mermaid block found in ${filePath}`);
+  let title: string;
+  let mermaidCode: string;
+  try {
+    ({ title, mermaidCode } = extractMermaidContent(filePath));
+  } catch (err) {
+    console.error(String(err));
     anyFailed = true;
     continue;
   }
@@ -94,11 +104,12 @@ for (const filePath of mermaidFiles) {
     continue;
   }
 
-  const drawingName = title || entry?.drawingName || 'Untitled Diagram';
+  const currentEntry = getDrawingEntry(manifest, filePath);
+  const drawingName = title || currentEntry?.drawingName || 'Untitled Diagram';
 
-  if (entry?.drawingId) {
+  if (currentEntry?.drawingId) {
     try {
-      await client.updateDrawing(entry.drawingId, {
+      await client.updateDrawing(currentEntry.drawingId, {
         name: drawingName,
         elements,
         appState: { ...DEFAULT_APP_STATE },
@@ -106,13 +117,13 @@ for (const filePath of mermaidFiles) {
       });
       const syncedAt = new Date().toISOString();
       updateDrawingEntry(manifest, filePath, {
-        ...entry,
+        ...currentEntry,
         drawingName,
         lastSyncedAt: syncedAt,
         lastSyncedHash: hash,
         skippedAt: null,
       });
-      console.log(`Updated ${filePath} → ${entry.drawingId}`);
+      console.log(`Updated ${filePath} → ${currentEntry.drawingId}`);
     } catch (err) {
       console.error(`Failed to update ${filePath}: ${err}`);
       anyFailed = true;
@@ -142,6 +153,12 @@ for (const filePath of mermaidFiles) {
   }
 }
 
-writeManifest(values.config as string, manifest);
-await closeConvertBrowser();
+try {
+  writeManifest(values.config as string, manifest);
+} catch (err) {
+  console.error(`Failed to write manifest: ${err}`);
+  anyFailed = true;
+} finally {
+  await closeConvertBrowser();
+}
 process.exit(anyFailed ? 1 : 0);

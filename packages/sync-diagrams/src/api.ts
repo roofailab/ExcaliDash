@@ -28,17 +28,25 @@ export type Collection = {
 export class ExcaliDashClient {
   private readonly baseUrl: string;
   private readonly headers: Record<string, string>;
+  private readonly timeoutMs: number;
 
-  constructor(baseUrl: string, apiKey: string) {
+  constructor(baseUrl: string, apiKey: string, timeoutMs = 30_000) {
     this.baseUrl = baseUrl.replace(/\/$/, '');
     this.headers = {
       'Content-Type': 'application/json',
       'X-API-Key': apiKey,
     };
+    this.timeoutMs = timeoutMs;
+  }
+
+  private fetchWithTimeout(url: string, init?: RequestInit): Promise<Response> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    return fetch(url, { ...init, signal: controller.signal }).finally(() => clearTimeout(timer));
   }
 
   async getDrawing(id: string): Promise<Drawing> {
-    const res = await fetch(`${this.baseUrl}/drawings/${id}`, {
+    const res = await this.fetchWithTimeout(`${this.baseUrl}/drawings/${id}`, {
       headers: this.headers,
     });
     if (!res.ok) {
@@ -48,7 +56,7 @@ export class ExcaliDashClient {
   }
 
   async createDrawing(payload: CreateDrawingPayload): Promise<{ id: string }> {
-    const res = await fetch(`${this.baseUrl}/drawings`, {
+    const res = await this.fetchWithTimeout(`${this.baseUrl}/drawings`, {
       method: 'POST',
       headers: this.headers,
       body: JSON.stringify(payload),
@@ -61,13 +69,13 @@ export class ExcaliDashClient {
   }
 
   async getCollections(): Promise<Collection[]> {
-    const res = await fetch(`${this.baseUrl}/collections`, { headers: this.headers });
+    const res = await this.fetchWithTimeout(`${this.baseUrl}/collections`, { headers: this.headers });
     if (!res.ok) throw new Error(`GET /collections failed: ${res.status} ${res.statusText}`);
     return res.json() as Promise<Collection[]>;
   }
 
   async createCollection(name: string): Promise<Collection> {
-    const res = await fetch(`${this.baseUrl}/collections`, {
+    const res = await this.fetchWithTimeout(`${this.baseUrl}/collections`, {
       method: 'POST',
       headers: this.headers,
       body: JSON.stringify({ name }),
@@ -80,7 +88,7 @@ export class ExcaliDashClient {
   }
 
   async updateDrawing(id: string, payload: UpdateDrawingPayload): Promise<void> {
-    const res = await fetch(`${this.baseUrl}/drawings/${id}`, {
+    const res = await this.fetchWithTimeout(`${this.baseUrl}/drawings/${id}`, {
       method: 'PUT',
       headers: this.headers,
       body: JSON.stringify(payload),

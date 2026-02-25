@@ -1,4 +1,6 @@
 name: Sync Diagrams to ExcaliDash
+permissions:
+  contents: write
 on:
   push:
     paths:

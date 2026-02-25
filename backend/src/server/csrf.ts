@@ -143,7 +143,7 @@ export const registerCsrfProtection = ({
     });
   });
 
-  const csrfProtectionMiddleware = (
+  const csrfProtectionMiddleware = async (
     req: express.Request,
     res: express.Response,
     next: express.NextFunction
@@ -154,8 +154,15 @@ export const registerCsrfProtection = ({
     }
 
     // API key authenticated requests are non-browser clients; CSRF does not apply.
-    if (req.headers["x-api-key"]) {
-      return next();
+    // Only bypass CSRF if the key is actually valid.
+    const apiKeyValue = req.headers["x-api-key"];
+    if (apiKeyValue) {
+      const { validateApiKey } = await import("../auth/apiKey");
+      const key = Array.isArray(apiKeyValue) ? apiKeyValue[0] : apiKeyValue;
+      if (await validateApiKey(key)) {
+        return next();
+      }
+      // Invalid key — fall through to normal CSRF checks (auth middleware will reject later).
     }
 
     const origin = req.headers["origin"];

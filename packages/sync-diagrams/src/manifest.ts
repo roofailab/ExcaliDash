@@ -25,7 +25,17 @@ const emptyManifest = (): SyncManifest => ({
 export function readManifest(configPath: string): SyncManifest {
   try {
     const raw = readFileSync(configPath, 'utf-8');
-    return JSON.parse(raw) as SyncManifest;
+    const parsed = JSON.parse(raw);
+    if (
+      typeof parsed !== 'object' ||
+      parsed === null ||
+      typeof parsed.drawings !== 'object' ||
+      parsed.drawings === null ||
+      Array.isArray(parsed.drawings)
+    ) {
+      throw new Error(`Invalid manifest format in ${configPath}: missing or invalid "drawings" field`);
+    }
+    return parsed as SyncManifest;
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
       return emptyManifest();

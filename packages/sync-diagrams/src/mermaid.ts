@@ -28,7 +28,10 @@ export function extractMermaidContent(filePath: string): { title: string; mermai
   const title = titleMatch ? titleMatch[1].trim() : '';
 
   const mermaidMatch = content.match(/```mermaid\r?\n([\s\S]*?)```/);
-  const mermaidCode = mermaidMatch ? mermaidMatch[1].trim() : '';
+  if (!mermaidMatch || !mermaidMatch[1].trim()) {
+    throw new Error(`No mermaid code block found in ${filePath}`);
+  }
+  const mermaidCode = mermaidMatch[1].trim();
 
   return { title, mermaidCode };
 }

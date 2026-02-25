@@ -17,7 +17,7 @@ export const getCiServiceAccountUser = async (
   prisma: PrismaClient
 ): Promise<NonNullable<Express.Request["user"]>> => {
   const user = await prisma.user.findFirst({
-    where: { email: config.ciServiceAccountEmail },
+    where: { email: config.ciServiceAccountEmail, isActive: true },
     select: {
       id: true,
       username: true,
@@ -30,7 +30,7 @@ export const getCiServiceAccountUser = async (
 
   if (!user) {
     throw new Error(
-      `CI service account not found. Create a user with email ${config.ciServiceAccountEmail}`
+      `CI service account not found or inactive. Create an active user with email ${config.ciServiceAccountEmail}`
     );
   }
 
