@@ -243,6 +243,12 @@ if (shouldEnforceHttps) {
   );
 
   app.use((req, res, next) => {
+    const reqPath = (req.originalUrl || req.url || "").split("?")[0] || "/";
+    // Keep platform/internal health checks simple and avoid redirect loops.
+    if (reqPath === "/health") {
+      return next();
+    }
+
     if (req.header("x-forwarded-proto") !== "https") {
       // Avoid Host-header based open redirects; prefer a configured canonical origin/host.
       const rawHost = String(req.header("host") || "").trim().toLowerCase();
@@ -696,7 +702,7 @@ const isMain =
   typeof require !== "undefined" && require.main === module;
 
 if (isMain) {
-  httpServer.listen(PORT, async () => {
+  httpServer.listen(PORT, "0.0.0.0", async () => {
     await initializeUploadDir();
     try {
       await issueBootstrapSetupCodeIfRequired({
