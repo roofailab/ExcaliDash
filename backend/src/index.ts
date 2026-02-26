@@ -702,7 +702,7 @@ const isMain =
   typeof require !== "undefined" && require.main === module;
 
 if (isMain) {
-  httpServer.listen(PORT, "0.0.0.0", async () => {
+  httpServer.listen(PORT, "::", async () => {
     await initializeUploadDir();
     try {
       await issueBootstrapSetupCodeIfRequired({
