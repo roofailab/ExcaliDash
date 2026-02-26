@@ -3,7 +3,7 @@ import jwt from "jsonwebtoken";
 import { config } from "../config";
 import { PrismaClient } from "../generated/client";
 import { prisma as defaultPrisma } from "../db/prisma";
-import { createAuthModeService, type AuthModeService } from "../auth/authMode";
+import { createAuthModeService, BOOTSTRAP_USER_ID, type AuthModeService } from "../auth/authMode";
 import { ACCESS_TOKEN_COOKIE_NAME, readCookie } from "../auth/cookies";
 import { API_KEY_HEADER, validateApiKey, getCiServiceAccountUser } from "../auth/apiKey";
 
@@ -18,6 +18,13 @@ declare global {
         role: string;
         mustResetPassword?: boolean;
         impersonatorId?: string;
+      };
+      realUser?: {
+        id: string;
+        username?: string | null;
+        email: string;
+        name: string;
+        role: string;
       };
       principal?: {
         kind: "user";
@@ -100,6 +107,19 @@ export const createAuthMiddleware = ({
   prisma,
   authModeService,
 }: AuthMiddlewareDeps) => {
+  const applySharedWorkspace = async (req: Request): Promise<void> => {
+    if (!config.sharedWorkspace || !req.user) return;
+    req.realUser = {
+      id: req.user.id,
+      username: req.user.username,
+      email: req.user.email,
+      name: req.user.name,
+      role: req.user.role,
+    };
+    await authModeService.getBootstrapActingUser();
+    req.user.id = BOOTSTRAP_USER_ID;
+  };
+
   const requireAuth = async (
     req: Request,
     res: Response,
@@ -189,6 +209,7 @@ export const createAuthMiddleware = ({
         impersonatorId: payload.impersonatorId,
       };
 
+      await applySharedWorkspace(req);
       next();
     } catch (error) {
       console.error("Error verifying user:", error);
@@ -266,6 +287,7 @@ export const createAuthMiddleware = ({
       console.error("Error in optional auth:", error);
     }
 
+    await applySharedWorkspace(req);
     next();
   };
 

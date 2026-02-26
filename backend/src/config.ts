@@ -27,6 +27,7 @@ interface Config {
   bootstrapSetupCodeMaxAttempts: number;
   apiKeys: string[];
   ciServiceAccountEmail: string;
+  sharedWorkspace: boolean;
 }
 
 export type AuthMode = "local" | "hybrid" | "oidc_enforced";
@@ -205,6 +206,7 @@ export const config: Config = {
   bootstrapSetupCodeMaxAttempts: getRequiredEnvNumber("BOOTSTRAP_SETUP_CODE_MAX_ATTEMPTS", 10),
   apiKeys: process.env.API_KEYS ? process.env.API_KEYS.split(',').map(k => k.trim()).filter(Boolean) : [],
   ciServiceAccountEmail: getOptionalEnv("CI_SERVICE_ACCOUNT_EMAIL", "ci@excalidash.local").trim(),
+  sharedWorkspace: getOptionalBoolean("SHARED_WORKSPACE", false),
 };
 
 if (config.nodeEnv === "production") {
