@@ -130,6 +130,7 @@ Thumbs.db
 *.tmp
 *.temp
 
+.excalidraw-sync.json
 # Agent looping files
 jq-filter.jq
 prompt.md

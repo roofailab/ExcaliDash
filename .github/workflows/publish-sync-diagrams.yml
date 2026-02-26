@@ -30,6 +30,17 @@ jobs:
       - run: npm run build
 
       - name: Publish (skip if version already exists)
-        run: npm publish || echo "Version already published, skipping."
+        run: |
+          set -euo pipefail
+          output=$(npm publish 2>&1)
+          status=$?
+          echo "$output"
+          if [ "$status" -ne 0 ]; then
+            if echo "$output" | grep -qiE "previously published|cannot publish over|already published"; then
+              echo "Version already published, skipping."
+            else
+              exit "$status"
+            fi
+          fi
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
