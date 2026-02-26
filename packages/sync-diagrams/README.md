@@ -1,4 +1,4 @@
-# @your-org/excalidash-sync
+# @roofailab/excalidash-sync
 
 Syncs `*.mermaid.md` files from a repo to [ExcaliDash](https://github.com/ZimengXiong/ExcaliDash). Converts Mermaid diagrams to Excalidraw elements via `@excalidraw/mermaid-to-excalidraw` and pushes them via the ExcaliDash REST API.
 
@@ -9,13 +9,13 @@ Designed to run in CI (GitHub Actions) on push. The sync manifest (`.excalidraw-
 ## Installation
 
 ```sh
-npx @your-org/excalidash-sync
+npx @roofailab/excalidash-sync
 ```
 
 Or globally:
 
 ```sh
-npm install -g @your-org/excalidash-sync
+npm install -g @roofailab/excalidash-sync
 excalidash-sync
 ```
 
@@ -28,7 +28,7 @@ Requires **Node.js 20+**.
 ```sh
 EXCALIDASH_URL=https://excalidash.internal.company.com \
 EXCALIDASH_API_KEY=your-plaintext-key \
-npx @your-org/excalidash-sync --dir docs/diagrams --config .excalidraw-sync.json
+npx @roofailab/excalidash-sync --dir docs/diagrams --config .excalidraw-sync.json
 ```
 
 ### CLI flags
@@ -148,8 +148,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - run: npx @your-org/excalidash-sync --dir docs/diagrams
+          registry-url: 'https://npm.pkg.github.com'
+          scope: '@roofailab'
+      - run: npx --yes playwright install --with-deps chromium
+      - run: npx --yes @roofailab/excalidash-sync --dir docs/diagrams
         env:
+          NODE_AUTH_TOKEN: ${{ secrets.GPR_TOKEN }}
           EXCALIDASH_URL: ${{ secrets.EXCALIDASH_URL }}
           EXCALIDASH_API_KEY: ${{ secrets.EXCALIDASH_API_KEY }}
       - uses: stefanzweifel/git-auto-commit-action@v5
@@ -158,7 +162,13 @@ jobs:
           file_pattern: .excalidraw-sync.json
 ```
 
-Add `EXCALIDASH_URL` and `EXCALIDASH_API_KEY` to your repo's GitHub Actions secrets.
+Add these secrets to your repo's GitHub Actions settings:
+
+| Secret | Description |
+|--------|-------------|
+| `GPR_TOKEN` | A GitHub PAT with `read:packages` scope to pull `@roofailab/*` from GitHub Packages |
+| `EXCALIDASH_URL` | Base URL of your ExcaliDash instance |
+| `EXCALIDASH_API_KEY` | Plaintext API key matching the bcrypt hash in ExcaliDash's `API_KEYS` env var |
 
 ### ExcaliDash setup
 
