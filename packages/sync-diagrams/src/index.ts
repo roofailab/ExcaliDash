@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 import { parseArgs } from 'node:util';
 import { ExcaliDashClient } from './api.js';
 import { readManifest, writeManifest, getDrawingEntry, updateDrawingEntry } from './manifest.js';
