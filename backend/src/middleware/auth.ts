@@ -287,7 +287,11 @@ export const createAuthMiddleware = ({
       console.error("Error in optional auth:", error);
     }
 
-    await applySharedWorkspace(req);
+    try {
+      await applySharedWorkspace(req);
+    } catch (error) {
+      console.error("Error applying shared workspace in optional auth:", error);
+    }
     next();
   };
 
@@ -308,6 +312,7 @@ export const createAuthMiddleware = ({
     }
     try {
       req.user = await getCiServiceAccountUser(prisma);
+      await applySharedWorkspace(req);
       next();
     } catch (error) {
       console.error("Error fetching CI service account:", error);
