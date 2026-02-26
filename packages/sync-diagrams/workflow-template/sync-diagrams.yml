@@ -14,8 +14,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - run: npx @your-org/excalidash-sync --dir docs/diagrams
+          registry-url: 'https://npm.pkg.github.com'
+          scope: '@roofailab'
+      - run: npx --yes playwright install --with-deps chromium
+      - run: npx --yes @roofailab/excalidash-sync --dir docs/diagrams
         env:
+          NODE_AUTH_TOKEN: ${{ secrets.GPR_TOKEN }}
           EXCALIDASH_URL: ${{ secrets.EXCALIDASH_URL }}
           EXCALIDASH_API_KEY: ${{ secrets.EXCALIDASH_API_KEY }}
       - uses: stefanzweifel/git-auto-commit-action@v5
