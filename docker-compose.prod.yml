@@ -1,6 +1,8 @@
 services:
   backend:
-    image: zimengxiong/excalidash-backend:latest
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
     container_name: excalidash-backend
     environment:
       - DATABASE_URL=file:/app/prisma/dev.db
@@ -38,7 +40,9 @@ services:
       retries: 3
 
   frontend:
-    image: zimengxiong/excalidash-frontend:latest
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
     container_name: excalidash-frontend
     ports:
       - "6767:80"
