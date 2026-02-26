@@ -14,6 +14,10 @@ http {
         ~*^http(?:,|$) http;
     }
 
+    # Re-resolve backend hostname every 30s so nginx picks up new IPs after redeploys.
+    # __RESOLVER__ is substituted at container startup from /etc/resolv.conf.
+    resolver __RESOLVER__ valid=30s ipv6=off;
+
     sendfile on;
     keepalive_timeout 65;
     gzip on;
@@ -38,7 +42,9 @@ http {
         # API and WebSocket proxy to backend
         # BACKEND_URL is substituted at container startup (default: backend:8000)
         location /api/ {
-            proxy_pass http://__BACKEND_URL__/;
+            set $backend http://__BACKEND_URL__;
+            rewrite ^/api/(.*) /$1 break;
+            proxy_pass $backend;
             proxy_http_version 1.1;
             proxy_set_header Upgrade $http_upgrade;
             proxy_set_header Connection 'upgrade';
@@ -63,7 +69,8 @@ http {
 
         # WebSocket proxy for Socket.IO
         location /socket.io/ {
-            proxy_pass http://__BACKEND_URL__/socket.io/;
+            set $backend http://__BACKEND_URL__;
+            proxy_pass $backend/socket.io/;
             proxy_http_version 1.1;
             proxy_set_header Upgrade $http_upgrade;
             proxy_set_header Connection 'upgrade';
