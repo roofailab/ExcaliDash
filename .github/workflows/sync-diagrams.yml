@@ -57,7 +57,7 @@ jobs:
           npx --yes @roofailab/excalidash-sync@0.1.1 \
             --dir docs/diagrams \
             --config .excalidraw-sync.json \
-            --collection "your-app-name"
+            --collection "excalidash"
 
       - name: Commit updated sync manifest
         uses: stefanzweifel/git-auto-commit-action@v5
