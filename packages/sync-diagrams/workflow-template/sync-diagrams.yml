@@ -1,12 +1,11 @@
-name: Sync Diagrams to ExcaliDash
-permissions:
-  contents: write
+name: Sync Mermaid Diagrams to ExcaliDash
+
 on:
   push:
     branches:
       - main
     paths:
-      - 'docs/diagrams/**/*.mermaid.md'
+      - "docs/diagrams/**/*.mermaid.md"
   workflow_dispatch:
     inputs:
       force_resync:
@@ -14,28 +13,54 @@ on:
         type: boolean
         default: false
 
+permissions:
+  contents: write
+  packages: read
+
+concurrency:
+  group: sync-diagrams-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   sync:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          registry-url: 'https://npm.pkg.github.com'
-          scope: '@roofailab'
-      - run: npx --yes playwright install --with-deps chromium
+          node-version: "20"
+          registry-url: "https://npm.pkg.github.com"
+          scope: "@roofailab"
+
+      - name: Install Playwright browser for Mermaid conversion
+        run: npx --yes playwright@1.58.2 install --with-deps chromium
+
       - name: Clear sync hashes for force resync
         if: ${{ github.event.inputs.force_resync == 'true' }}
         run: |
-          jq '.drawings |= with_entries(.value.lastSyncedHash = null | .value.lastSyncedAt = null)' \
-            .excalidraw-sync.json > tmp.json && mv tmp.json .excalidraw-sync.json
-      - run: npx --yes @roofailab/excalidash-sync --dir docs/diagrams
+          if [ -f .excalidraw-sync.json ]; then
+            jq '.drawings |= with_entries(.value.lastSyncedHash = null | .value.lastSyncedAt = null)' \
+              .excalidraw-sync.json > tmp.json && mv tmp.json .excalidraw-sync.json
+          else
+            echo "No .excalidraw-sync.json found; skipping hash reset."
+          fi
+
+      - name: Sync Mermaid diagrams to ExcaliDash
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GPR_TOKEN }}
           EXCALIDASH_URL: ${{ secrets.EXCALIDASH_URL }}
           EXCALIDASH_API_KEY: ${{ secrets.EXCALIDASH_API_KEY }}
-      - uses: stefanzweifel/git-auto-commit-action@v5
+        run: |
+          npx --yes @roofailab/excalidash-sync@0.1.1 \
+            --dir docs/diagrams \
+            --config .excalidraw-sync.json \
+            --collection "your-app-name"
+
+      - name: Commit updated sync manifest
+        uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: "chore: sync diagram mappings"
+          commit_message: "chore: update ExcaliDash sync manifest"
           file_pattern: .excalidraw-sync.json
