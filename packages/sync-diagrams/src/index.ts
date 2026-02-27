@@ -26,6 +26,13 @@ if (!excalidashUrl || !apiKey) {
   process.exit(1);
 }
 
+try {
+  new URL(excalidashUrl);
+} catch {
+  console.error(`Error: EXCALIDASH_URL is not a valid URL: "${excalidashUrl}" — make sure it includes the protocol (e.g. https://excalidash.yourcompany.com)`);
+  process.exit(1);
+}
+
 const client = new ExcaliDashClient(excalidashUrl, apiKey);
 const manifest = readManifest(values.config as string);
 const mermaidFiles = discoverMermaidFiles(values.dir as string);
