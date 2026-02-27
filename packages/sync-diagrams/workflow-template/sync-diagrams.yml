@@ -7,6 +7,12 @@ on:
       - main
     paths:
       - 'docs/diagrams/**/*.mermaid.md'
+  workflow_dispatch:
+    inputs:
+      force_resync:
+        description: "Clear sync hashes to force re-sync of all diagrams"
+        type: boolean
+        default: false
 
 jobs:
   sync:
@@ -19,6 +25,11 @@ jobs:
           registry-url: 'https://npm.pkg.github.com'
           scope: '@roofailab'
       - run: npx --yes playwright install --with-deps chromium
+      - name: Clear sync hashes for force resync
+        if: ${{ github.event.inputs.force_resync == 'true' }}
+        run: |
+          jq '.drawings |= with_entries(.value.lastSyncedHash = null | .value.lastSyncedAt = null)' \
+            .excalidraw-sync.json > tmp.json && mv tmp.json .excalidraw-sync.json
       - run: npx --yes @roofailab/excalidash-sync --dir docs/diagrams
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GPR_TOKEN }}
