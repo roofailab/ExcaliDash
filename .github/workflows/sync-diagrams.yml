@@ -41,8 +41,12 @@ jobs:
       - name: Clear sync hashes for force resync
         if: ${{ github.event.inputs.force_resync == 'true' }}
         run: |
-          jq '.drawings |= with_entries(.value.lastSyncedHash = null | .value.lastSyncedAt = null)' \
-            .excalidraw-sync.json > tmp.json && mv tmp.json .excalidraw-sync.json
+          if [ -f .excalidraw-sync.json ]; then
+            jq '.drawings |= with_entries(.value.lastSyncedHash = null | .value.lastSyncedAt = null)' \
+              .excalidraw-sync.json > tmp.json && mv tmp.json .excalidraw-sync.json
+          else
+            echo "No .excalidraw-sync.json found; skipping hash reset."
+          fi
 
       - name: Sync Mermaid diagrams to ExcaliDash
         env:

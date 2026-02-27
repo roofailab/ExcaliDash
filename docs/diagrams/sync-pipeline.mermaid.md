@@ -8,7 +8,7 @@ flowchart LR
     Push[git push → main]
 
     subgraph GHA[GitHub Actions]
-        Trigger[Path trigger\ndocs/diagrams/**]
+        Trigger[Path trigger\ndocs/diagrams/**/*.mermaid.md]
         Node[Setup Node 20\n@roofailab scope]
         Playwright[Install Chromium\nPlaywright 1.58.2]
     end
