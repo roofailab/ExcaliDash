@@ -12,13 +12,13 @@ const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [theme, setTheme] = useState<Theme>(() => {
     const savedTheme = localStorage.getItem('theme');
-    return (savedTheme as Theme) || 'light';
+    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    return (savedTheme as Theme) || (prefersDark ? 'dark' : 'light');
   });
 
   useEffect(() => {
-    console.log('Theme changed to:', theme);
     localStorage.setItem('theme', theme);
-    
+
     const link = document.querySelector("link[rel~='icon']") as HTMLLinkElement;
     if (link) {
       link.href = theme === 'dark' ? '/favicon-dark.svg' : '/favicon-light.svg';
@@ -26,7 +26,6 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
     if (theme === 'dark') {
       document.documentElement.classList.add('dark');
-      console.log('Added dark class, classList:', document.documentElement.classList.toString());
     } else {
       document.documentElement.classList.remove('dark');
     }
