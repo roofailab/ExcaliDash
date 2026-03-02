@@ -38,7 +38,7 @@ assert_log_contains() {
 
 run_sync() {
   EXCALIDASH_URL="$EXCALIDASH_URL" EXCALIDASH_API_KEY="$PLAIN_API_KEY" \
-    npx --yes @roofailab/excalidash-sync@0.1.2 --dir "$SYNC_DIR" --config "$SYNC_CONFIG_PATH"
+    npx --yes @roofailab/excalidash-sync@0.1.4 --dir "$SYNC_DIR" --config "$SYNC_CONFIG_PATH"
 }
 
 log "Creating/upserting CI service account user in local SQLite via Prisma"

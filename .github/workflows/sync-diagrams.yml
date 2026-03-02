@@ -54,7 +54,7 @@ jobs:
           EXCALIDASH_URL: ${{ secrets.EXCALIDASH_URL }}
           EXCALIDASH_API_KEY: ${{ secrets.EXCALIDASH_API_KEY }}
         run: |
-          cd /tmp && npx --yes @roofailab/excalidash-sync@0.1.2 \
+          cd /tmp && npx --yes @roofailab/excalidash-sync@0.1.4 \
             --dir $GITHUB_WORKSPACE/docs/diagrams \
             --config $GITHUB_WORKSPACE/.excalidraw-sync.json \
             --collection "excalidash"
