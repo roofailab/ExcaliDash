@@ -1,0 +1,16 @@
+{
+  "pipelines": [
+    {
+      "match": "docs/diagrams/**/*.mermaid.md",
+      "transform": "mermaid-to-excalidraw",
+      "targets": [
+        "excalidash",
+        "vault"
+      ]
+    }
+  ],
+  "state": {
+    "collectionId": null,
+    "drawings": {}
+  }
+}
